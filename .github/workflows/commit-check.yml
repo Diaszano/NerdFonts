@@ -1,0 +1,30 @@
+name: Commit Check
+
+on:
+  push:
+  pull_request:
+    branches: [main, development]
+
+jobs:
+  commit-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify commit messages
+        uses: commit-check/commit-check-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          message: true
+          branch: true
+          author-name: false
+          author-email: false
+          job-summary: true
+          pr-comments: ${{ github.event_name == 'pull_request' }}
