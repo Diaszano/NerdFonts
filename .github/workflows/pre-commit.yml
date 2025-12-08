@@ -1,0 +1,28 @@
+name: pre-commit
+
+on:
+  push:
+  pull_request:
+
+env:
+  PYTHON_VERSION: 3.13
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    permissions:
+        contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+            python-version: ${{ env.PYTHON_VERSION }}
+            check-latest: true
+
+      - name: Run pre-commit (all files)
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files
