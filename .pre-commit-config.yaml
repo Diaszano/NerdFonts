@@ -12,11 +12,6 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: check-executables-have-shebangs
-      - id: no-commit-to-branch
-        name: enforce branch naming convention
-        args:
-          - "--pattern"
-          - "^(?!((feat|fix|refactor|chore|docs|test|ci)/[a-z0-9-]+)$).*"
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.3.0
