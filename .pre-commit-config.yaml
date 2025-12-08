@@ -1,0 +1,45 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: no-commit-to-branch
+        name: enforce branch naming convention
+        args:
+          - "--pattern"
+          - "^(?!((feat|fix|refactor|chore|docs|test|ci)/[a-z0-9-]+)$).*"
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.3.0
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional pre-commit
+        stages: [commit-msg]
+        args: [--strict, build, chore, ci, docs, feat, fix, perf, refactor, style, test]
+
+  - repo: https://github.com/zricethezav/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck (scripts)
+        files: ^scripts/.*\.sh$
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        files: ^scripts/.*\.sh$
