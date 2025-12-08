@@ -1,0 +1,54 @@
+# EditorConfig is awesome: https://editorconfig.org
+root = true
+
+# Default configuration
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+indent_style = space
+indent_size = 2
+
+# Makefile uses tabs by default.
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+# Shell scripts
+[*.sh]
+indent_style = space
+indent_size = 2
+
+# Markdown
+[*.md]
+max_line_length = off
+trim_trailing_whitespace = false
+
+# JSON / YAML / TOML
+[*.json]
+indent_style = space
+indent_size = 2
+
+[*.yml]
+indent_style = space
+indent_size = 2
+
+[*.yaml]
+indent_style = space
+indent_size = 2
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# GitHub workflows
+[.github/workflows/*.yml]
+indent_style = space
+indent_size = 2
+
+# EditorConfig for IDE/configs editor
+[*.editorconfig]
+indent_style = space
+indent_size = 2

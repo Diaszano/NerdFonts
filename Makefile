@@ -18,8 +18,16 @@
 # Default goal when running `make` without arguments
 .DEFAULT_GOAL := help
 
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+
 # Path to the main install script
 INSTALL_SCRIPT := scripts/install.sh
+
+# Arguments to pass to the install script
+RUN_ARGS ?= # e.g.: RUN_ARGS=--all
+
 
 # -----------------------------------------------------------------------------
 # Meta targets
@@ -74,15 +82,15 @@ pre-commit: ## Run pre-commit hooks against all files in the repository
 # Main install script
 # -----------------------------------------------------------------------------
 .PHONY: run
-run: ## Execute the main install script (scripts/install.sh)
-	@echo "[run] Executing $(INSTALL_SCRIPT)..."
+run: ## Execute the main install script (scripts/install.sh). Use RUN_ARGS=--all to install all fonts.
+	@echo "[run] Executing $(INSTALL_SCRIPT) $(RUN_ARGS)..."
 	@if [ -f "$(INSTALL_SCRIPT)" ]; then \
-		if [ -x "$(INSTALL_SCRIPT)" ]; then \
-			"$(INSTALL_SCRIPT)"; \
-		else \
-			sh "$(INSTALL_SCRIPT)"; \
-		fi; \
+		bash "$(INSTALL_SCRIPT)" $(RUN_ARGS); \
 	else \
 		echo "[run] ERROR: $(INSTALL_SCRIPT) not found." >&2; \
 		exit 1; \
 	fi
+
+.PHONY: run-all
+run-all: ## Install all available Nerd Fonts without confirmation.
+	RUN_ARGS=--all $(MAKE) run
