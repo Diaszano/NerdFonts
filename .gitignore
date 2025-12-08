@@ -1,0 +1,73 @@
+# === OS / Desktop ===
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux / misc
+*~
+.nfs*
+
+# Thumbnails
+._*
+Thumbs.db
+ehthumbs.db
+
+# Trash
+.Trash
+.Spotlight-V100
+.fseventsd
+
+# === Editors / IDEs ===
+# Vim / Neovim
+*.swp
+*.swo
+*.swm
+Session.vim
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# JetBrains
+.idea/
+
+# Eclipse
+.project
+.cproject
+.settings/
+
+# === Build / Tools / Temp ===
+# Generic temp
+*.tmp
+*.temp
+*.log
+*.bak
+*.orig
+*.rej
+
+# Lock / pid
+*.pid
+*.seed
+
+# Archives
+*.tar
+*.gz
+*.bz2
+*.zip
+*.7z
+
+# === Environment / Sensitive Configs ===
+.env
+.env.*
+*.local
+
+# === Project-specific ===
+# Output / cache / project tmp files
+.tmp/
+.cache/
+dist/
+build/
