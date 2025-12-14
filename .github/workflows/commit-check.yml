@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main, development]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   commit-check:
     uses: Diaszano/actions/.github/workflows/commit-check.yaml@v1.0.0

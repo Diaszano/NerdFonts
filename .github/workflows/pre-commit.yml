@@ -7,6 +7,9 @@ on:
 env:
   PYTHON_VERSION: 3.13
 
+permissions:
+  contents: read
+
 jobs:
   pre-commit:
     uses: Diaszano/actions/.github/workflows/pre-commit.yaml@v1.0.0
