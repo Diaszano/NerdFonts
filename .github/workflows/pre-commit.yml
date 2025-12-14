@@ -9,20 +9,4 @@ env:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
-    permissions:
-        contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-            python-version: ${{ env.PYTHON_VERSION }}
-            check-latest: true
-
-      - name: Run pre-commit (all files)
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: --all-files
+    uses: Diaszano/actions/.github/workflows/pre-commit.yaml@v1.0.0
