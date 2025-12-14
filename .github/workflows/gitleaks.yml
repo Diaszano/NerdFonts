@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: "0 0 * * *"
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   gitleaks:
     uses: Diaszano/actions/.github/workflows/gitleaks.yaml@v1.0.0
