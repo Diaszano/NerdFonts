@@ -56,8 +56,7 @@ pacman_normalize_pkg() {
   printf '%s' "$id"
 }
 
-# pacman_id_to_pkg maps a canonical id back to its package name, preferring
-# the catalog map and falling back to the conventional naming scheme.
+# pacman_id_to_pkg maps a canonical id back to its package name.
 #
 # Arguments:
 #   $1 - Canonical font id.
@@ -65,10 +64,7 @@ pacman_normalize_pkg() {
 # Output:
 #   The pacman package name.
 pacman_id_to_pkg() {
-  local id=$1
-  local pkg=""
-  pkg=$(map_get PACMAN_FONT_MAP "$id") || pkg="ttf-${id}-nerd"
-  printf '%s' "$pkg"
+  printf 'ttf-%s-nerd' "$1"
 }
 
 # -----------------------------------------------------------------------------
@@ -76,7 +72,7 @@ pacman_id_to_pkg() {
 # -----------------------------------------------------------------------------
 
 # pacman_list_fonts prints every available Nerd Fonts package as canonical
-# ids, one per line, filling PACMAN_FONT_MAP. Empty output is valid.
+# ids, one per line. Empty output is valid.
 pacman_list_fonts() {
   local pkgs
   pkgs=$(pacman -Sgq nerd-fonts 2>/dev/null) || pkgs=""
@@ -84,22 +80,18 @@ pacman_list_fonts() {
     pkgs=$(pacman -Ssq nerd 2>/dev/null) || pkgs=""
   fi
 
-  PACMAN_FONT_MAP=""
-
   local pkg
   local id
   while IFS= read -r pkg; do
     [[ -z "$pkg" ]] && continue
     id=$(pacman_normalize_pkg "$pkg")
     [[ -z "$id" ]] && continue
-    map_has PACMAN_FONT_MAP "$id" && continue
-    map_set PACMAN_FONT_MAP "$id" "$pkg"
     printf '%s\n' "$id"
   done <<<"$pkgs"
 }
 
 # pacman_list_installed_fonts prints the canonical ids of every installed
-# Nerd Font package (one per line), filling PACMAN_FONT_MAP as well.
+# Nerd Font package (one per line).
 pacman_list_installed_fonts() {
   local installed
   installed=$(pacman -Qq 2>/dev/null | grep 'nerd' || true)
@@ -111,9 +103,6 @@ pacman_list_installed_fonts() {
     [[ -z "$pkg" ]] && continue
     id=$(pacman_normalize_pkg "$pkg")
     [[ -z "$id" ]] && continue
-    if ! map_has PACMAN_FONT_MAP "$id"; then
-      map_set PACMAN_FONT_MAP "$id" "$pkg"
-    fi
     printf '%s\n' "$id"
   done <<<"$installed"
 }

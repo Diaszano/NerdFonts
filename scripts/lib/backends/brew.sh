@@ -55,8 +55,7 @@ brew_cask_to_id() {
   printf '%s' "$id"
 }
 
-# brew_id_to_cask maps a canonical id back to its cask name, preferring the
-# catalog map and falling back to the conventional naming scheme.
+# brew_id_to_cask maps a canonical id back to its cask name.
 #
 # Arguments:
 #   $1 - Canonical font id.
@@ -64,10 +63,7 @@ brew_cask_to_id() {
 # Output:
 #   The Homebrew cask name.
 brew_id_to_cask() {
-  local id=$1
-  local cask=""
-  cask=$(map_get BREW_FONT_MAP "$id") || cask="font-${id}-nerd-font"
-  printf '%s' "$cask"
+  printf 'font-%s-nerd-font' "$1"
 }
 
 # -----------------------------------------------------------------------------
@@ -75,7 +71,7 @@ brew_id_to_cask() {
 # -----------------------------------------------------------------------------
 
 # brew_list_fonts prints every available Nerd Font cask as canonical ids,
-# one per line, filling BREW_FONT_MAP for later id -> cask lookups.
+# one per line.
 #
 # Exit codes:
 #   2 - Homebrew search failed (e.g., tap inconsistency); a set of suggested
@@ -95,8 +91,6 @@ Suggested manual recovery steps (use with caution):
 After that, re-run this script."
   fi
 
-  BREW_FONT_MAP=""
-
   local cask
   local id
   while IFS= read -r cask; do
@@ -109,21 +103,16 @@ After that, re-run this script."
 
     id=$(brew_cask_to_id "$cask")
     [[ -z "$id" ]] && continue
-    map_has BREW_FONT_MAP "$id" && continue
-
-    map_set BREW_FONT_MAP "$id" "$cask"
     printf '%s\n' "$id"
   done <<<"$search_output"
 }
 
 # brew_list_installed_fonts prints the canonical ids of every installed Nerd
-# Font cask (one per line), filling BREW_FONT_MAP as well.
+# Font cask (one per line).
 brew_list_installed_fonts() {
   local installed
   installed=$(brew list --cask 2>/dev/null | grep 'nerd-font' || true)
   [[ -z "$installed" ]] && return 0
-
-  BREW_FONT_MAP="${BREW_FONT_MAP:-}"
 
   local cask
   local id
@@ -131,9 +120,6 @@ brew_list_installed_fonts() {
     [[ -z "$cask" ]] && continue
     id=$(brew_cask_to_id "$cask")
     [[ -z "$id" ]] && continue
-    if ! map_has BREW_FONT_MAP "$id"; then
-      map_set BREW_FONT_MAP "$id" "$cask"
-    fi
     printf '%s\n' "$id"
   done <<<"$installed"
 }

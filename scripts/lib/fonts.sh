@@ -66,40 +66,18 @@ is_font_installed() {
 #   - Callers must read "$CACHED_FONT_LIST" instead of capturing the output
 #     of this function.
 load_font_catalog() {
-  if [[ "$CACHED_FONT_LIST_BACKEND" == "$RESOLVED_BACKEND" && "$CATALOG_SHELL_LOADED" == "1" ]]; then
+  if [[ "$CACHED_FONT_LIST_BACKEND" == "$RESOLVED_BACKEND" && -n "$CACHED_FONT_LIST" ]]; then
     return 0
   fi
-
-  local tmp
-  tmp=$(mktemp)
-
-  # No error tolerance here on purpose: backend die() calls must surface
-  # their exit codes (auto detection probes use their own guarded call).
-  "${RESOLVED_BACKEND}_list_fonts" >"$tmp"
-
-  CACHED_FONT_LIST=$(cat "$tmp")
-  rm -f "$tmp"
+  CACHED_FONT_LIST=$("${RESOLVED_BACKEND}_list_fonts")
   CACHED_FONT_LIST_BACKEND="$RESOLVED_BACKEND"
-  CATALOG_SHELL_LOADED=1
 }
 
-# load_installed_fonts ensures CACHED_INSTALLED_LIST holds the canonical ids
-# installed through the resolved backend, running
-# "<backend>_list_installed_fonts" in the CURRENT shell when needed (same
-# side-effect rationale as load_font_catalog).
 load_installed_fonts() {
-  if [[ "$INSTALLED_SHELL_LOADED" == "1" ]]; then
+  if [[ -n "$CACHED_INSTALLED_LIST" ]]; then
     return 0
   fi
-
-  local tmp
-  tmp=$(mktemp)
-
-  "${RESOLVED_BACKEND}_list_installed_fonts" >"$tmp"
-
-  CACHED_INSTALLED_LIST=$(cat "$tmp")
-  rm -f "$tmp"
-  INSTALLED_SHELL_LOADED=1
+  CACHED_INSTALLED_LIST=$("${RESOLVED_BACKEND}_list_installed_fonts")
 }
 
 # fetch_nerd_fonts prints the canonical ids of every Nerd Font offered by the
