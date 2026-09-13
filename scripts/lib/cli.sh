@@ -116,24 +116,7 @@ disable_colors() {
 # Output:
 #   Prints the normalized list (one font per line).
 normalize_font_list() {
-  local csv=$1
-  local entry
-  local trimmed
-  local normalized=""
-
-  while IFS= read -r entry; do
-    trimmed="${entry}"
-    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-    if [[ -z "$trimmed" ]]; then
-      continue
-    fi
-    normalized+="${normalized:+$'\n'}${trimmed}"
-  done <<EOF
-$(printf '%s' "$csv" | tr ',' '\n')
-EOF
-
-  printf '%s' "$normalized"
+  printf '%s' "$1" | tr -d ' ' | tr ',' '\n' | grep -v '^$'
 }
 
 # -----------------------------------------------------------------------------
@@ -230,29 +213,14 @@ parse_args() {
 #   - --all cannot be combined with --fonts.
 #   - --uninstall cannot be combined with --all or --fonts.
 validate_arg_combination() {
-  if [[ "$OPT_LIST" == 1 ]]; then
-    if [[ "$OPT_ALL" == 1 || -n "$OPT_FONTS" || "$OPT_INSTALLED" == 1 || -n "$OPT_UNINSTALL_MODE" ]]; then
-      die 1 "Option --list cannot be combined with other actions."
-    fi
-  fi
+  local actions=0
+  [[ "$OPT_ALL" == 1 ]] && actions=$((actions + 1))
+  [[ -n "$OPT_FONTS" ]] && actions=$((actions + 1))
+  [[ "$OPT_LIST" == 1 ]] && actions=$((actions + 1))
+  [[ "$OPT_INSTALLED" == 1 ]] && actions=$((actions + 1))
+  [[ -n "$OPT_UNINSTALL_MODE" ]] && actions=$((actions + 1))
 
-  if [[ "$OPT_INSTALLED" == 1 ]]; then
-    if [[ "$OPT_ALL" == 1 || -n "$OPT_FONTS" || -n "$OPT_UNINSTALL_MODE" ]]; then
-      die 1 "Option --installed cannot be combined with other actions."
-    fi
-  fi
-
-  if [[ "$OPT_DRY_RUN" == 1 && ("$OPT_LIST" == 1 || "$OPT_INSTALLED" == 1) ]]; then
-    die 1 "Option --dry-run cannot be combined with --list or --installed."
-  fi
-
-  if [[ "$OPT_ALL" == 1 && -n "$OPT_FONTS" ]]; then
-    die 1 "Options --all and --fonts cannot be combined."
-  fi
-
-  if [[ -n "$OPT_UNINSTALL_MODE" ]]; then
-    if [[ "$OPT_ALL" == 1 || -n "$OPT_FONTS" ]]; then
-      die 1 "Option --uninstall cannot be combined with --all or --fonts."
-    fi
+  if ((actions > 1)); then
+    die 1 "Apenas uma ação (--all, --fonts, --list, --installed, --uninstall) pode ser especificada."
   fi
 }

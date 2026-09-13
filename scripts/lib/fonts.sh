@@ -217,53 +217,31 @@ has_failed_fonts() {
 # install_all_fonts installs all fonts provided in the input list without any
 # interactive confirmation.
 #
-# Arguments:
-#   $1 - List of fonts (one per line) to be installed.
-install_all_fonts() {
-  local fonts=$1
+filter_font_list() {
+  local requested=$1
+  local target_list=$2
+  local warn_pattern=$3
+  local matched=""
+  local font
 
-  print_step "Installing all available Nerd Fonts..."
+  while IFS= read -r font; do
+    [[ -z "$font" ]] && continue
+    if list_contains "$font" "$target_list"; then
+      matched+="${matched:+$'\n'}${font}"
+    else
+      print_warn "$(printf "$warn_pattern" "$font")"
+    fi
+  done <<<"$requested"
 
-  dispatch_install_fonts "$fonts"
-}
-
-# prompt_install_selected_fonts installs all fonts selected via fzf.
-#
-# Arguments:
-#   $1 - List of selected fonts (one per line).
-#
-# Notes:
-#   - Despite the name, this function does not prompt per font; it installs
-#     all fonts passed as input. The only interactive step is the fzf selection.
-prompt_install_selected_fonts() {
-  local fonts=$1
-
-  print_step "Installing selected Nerd Fonts..."
-
-  dispatch_install_fonts "$fonts"
+  printf '%s' "$matched"
 }
 
 # install_named_fonts validates a requested font list against the available
 # fonts and installs the matching ones. Unknown names log a warning and are
 # skipped; if none of the names is valid, it fails with exit code 3.
-#
-# Arguments:
-#   $1 - Requested fonts (normalized, one per line).
-#   $2 - Available fonts (one per line).
 install_named_fonts() {
-  local requested=$1
-  local available=$2
-  local font
-  local to_install=""
-
-  while IFS= read -r font; do
-    [[ -z "$font" ]] && continue
-    if list_contains "$font" "$available"; then
-      to_install+="${to_install:+$'\n'}${font}"
-    else
-      print_warn "Unknown font '${font}'. Skipping."
-    fi
-  done <<<"$requested"
+  local to_install
+  to_install=$(filter_font_list "$1" "$2" "Unknown font '%s'. Skipping.")
 
   if [[ -z "$to_install" ]]; then
     die 3 "None of the requested fonts are available. Run with --list to see the valid names."
@@ -279,40 +257,13 @@ install_named_fonts() {
 # uninstall_named_fonts validates a requested font list against the installed
 # fonts and removes the matching ones. Names that are not installed log a
 # warning and are skipped; if none of the names matches, it fails with exit 3.
-#
-# Arguments:
-#   $1 - Requested fonts (normalized, one per line).
-#   $2 - Installed fonts (one per line).
 uninstall_named_fonts() {
-  local requested=$1
-  local installed=$2
-  local font
-  local to_uninstall=""
-
-  while IFS= read -r font; do
-    [[ -z "$font" ]] && continue
-    if list_contains "$font" "$installed"; then
-      to_uninstall+="${to_uninstall:+$'\n'}${font}"
-    else
-      print_warn "'${font}' is not installed. Skipping."
-    fi
-  done <<<"$requested"
+  local to_uninstall
+  to_uninstall=$(filter_font_list "$1" "$2" "'%s' is not installed. Skipping.")
 
   if [[ -z "$to_uninstall" ]]; then
     die 3 "None of the requested fonts are installed. Run with --installed to see what is present."
   fi
 
   dispatch_uninstall_fonts "$to_uninstall"
-}
-
-# uninstall_all_fonts removes every installed Nerd Font passed as input.
-#
-# Arguments:
-#   $1 - Installed fonts (one per line).
-uninstall_all_fonts() {
-  local installed=$1
-
-  print_step "Uninstalling all installed Nerd Fonts..."
-
-  dispatch_uninstall_fonts "$installed"
 }

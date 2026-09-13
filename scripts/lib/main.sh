@@ -103,7 +103,8 @@ run_install() {
   fi
 
   if [[ "$OPT_ALL" == 1 ]]; then
-    install_all_fonts "$CACHED_FONT_LIST"
+    print_step "Installing all available Nerd Fonts..."
+    dispatch_install_fonts "$CACHED_FONT_LIST"
     if has_failed_fonts; then
       die 4 "Some fonts failed to install (${FAILED_FONTS[*]}). Please review the output above."
     fi
@@ -122,7 +123,8 @@ run_install() {
     exit 0
   fi
 
-  prompt_install_selected_fonts "$selected_fonts"
+  print_step "Installing selected Nerd Fonts..."
+  dispatch_install_fonts "$selected_fonts"
   if has_failed_fonts; then
     die 4 "Some fonts failed to install (${FAILED_FONTS[*]}). Please review the output above."
   fi
@@ -162,10 +164,11 @@ run_uninstall() {
   if [[ "$OPT_UNINSTALL_MODE" == "all" ]]; then
     if [[ -z "$CACHED_INSTALLED_LIST" ]]; then
       print_warn "No Nerd Fonts are currently installed. Nothing to uninstall."
-      return 0
+      exit 0
     fi
 
-    uninstall_all_fonts "$CACHED_INSTALLED_LIST"
+    print_step "Uninstalling all installed Nerd Fonts..."
+    dispatch_uninstall_fonts "$CACHED_INSTALLED_LIST"
     if has_failed_fonts; then
       die 4 "Some fonts failed to uninstall (${FAILED_FONTS[*]}). Please review the output above."
     fi
