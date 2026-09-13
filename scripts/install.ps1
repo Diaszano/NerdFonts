@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -133,10 +133,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-class NfUsageException : System.Exception {
-    NfUsageException([string]$message) : base($message) { }
-}
-
 ###############################################################################
 # Region: Constants and script state
 ###############################################################################
@@ -215,30 +211,6 @@ function Test-NfCommand {
     return [bool](Get-Command -Name $Name -ErrorAction SilentlyContinue)
 }
 
-function ConvertTo-NfLowercase {
-    param([string]$Value)
-    return $Value.ToLowerInvariant()
-}
-
-function Get-NfCanonicalIdsFromCsv {
-    param([string]$Csv)
-    $result = @()
-    if ([string]::IsNullOrWhiteSpace($Csv)) { return $result }
-    foreach ($entry in $Csv.Split(',')) {
-        $trimmed = $entry.Trim()
-        if ($trimmed) { $result += $trimmed }
-    }
-    return $result
-}
-
-function Test-NfListContains {
-    param([string[]]$List, [string]$Value)
-    foreach ($item in $List) {
-        if ($item -eq $Value) { return $true }
-    }
-    return $false
-}
-
 ###############################################################################
 # Region: Logging and exit helpers (mirrors scripts/lib/log.sh)
 ###############################################################################
@@ -302,31 +274,31 @@ function Show-NfPlain {
 function Assert-NfValidOptions {
     $validBackends = @('auto', 'scoop', 'winget', 'choco', 'direct')
     if ($validBackends -notcontains $script:OptBackend) {
-        throw [NfUsageException]("Invalid backend '{0}'. Valid backends: auto, scoop, winget, choco, direct." -f $script:OptBackend)
+        throw ("Invalid backend '{0}'. Valid backends: auto, scoop, winget, choco, direct." -f $script:OptBackend)
     }
 
     if ($script:FontsWasBound -and [string]::IsNullOrWhiteSpace($script:OptFonts)) {
-        throw [NfUsageException]'Option -Fonts requires a non-empty value.'
+        throw 'Option -Fonts requires a non-empty value.'
     }
 
     if ($script:OptList) {
         if ($script:OptAll -or $script:FontsWasBound -or $script:OptInstalled -or $script:IsUninstallAction -or $script:OptDryRun) {
-            throw [NfUsageException]'Option -List cannot be combined with other actions.'
+            throw 'Option -List cannot be combined with other actions.'
         }
     }
 
     if ($script:OptInstalled) {
         if ($script:OptAll -or $script:FontsWasBound -or $script:IsUninstallAction -or $script:OptDryRun) {
-            throw [NfUsageException]'Option -Installed cannot be combined with other actions.'
+            throw 'Option -Installed cannot be combined with other actions.'
         }
     }
 
     if ($script:OptAll -and $script:FontsWasBound) {
-        throw [NfUsageException]'Options -All and -Fonts cannot be combined.'
+        throw 'Options -All and -Fonts cannot be combined.'
     }
 
     if ($script:IsUninstallAction -and $script:OptAll) {
-        throw [NfUsageException]'Option -Uninstall cannot be combined with -All.'
+        throw 'Option -Uninstall cannot be combined with -All.'
     }
 }
 
@@ -580,7 +552,7 @@ function Test-NfScoopFontInstalled {
     $package = Get-NfScoopPackageForId -Id $Id
     if (-not $package) { return $false }
     $installed = Get-NfScoopInstalledPackages
-    return (Test-NfListContains -List $installed -Value $package)
+    return ($installed -contains $package)
 }
 
 function Invoke-NfScoopInstall {
@@ -890,7 +862,7 @@ function Test-NfChocoFontInstalled {
     param([string]$Id)
     $package = Get-NfChocoPackageForId -Id $Id
     $locals = Get-NfChocoLocalPackages
-    return (Test-NfListContains -List $locals -Value $package)
+    return ($locals -contains $package)
 }
 
 function Get-NfChocoInstalledFonts {
@@ -1110,7 +1082,7 @@ function Import-NfDirectManifest {
     foreach ($url in $data.Urls) {
         if (-not $url.ToLowerInvariant().EndsWith('.zip')) { continue }
         $fileName = ($url -split '/')[-1]
-        $id = ConvertTo-NfLowercase ([IO.Path]::GetFileNameWithoutExtension($fileName))
+        $id = ([IO.Path]::GetFileNameWithoutExtension($fileName)).ToLowerInvariant()
         if (-not $id) { continue }
         if (-not $script:DirectFontMap.ContainsKey($id)) {
             $script:DirectFontMap[$id] = $fileName
@@ -1607,10 +1579,10 @@ function Invoke-NfInstallWorkflow {
     }
 
     if ($script:FontsWasBound) {
-        $requested = Get-NfCanonicalIdsFromCsv -Csv $script:OptFonts
+        $requested = $script:OptFonts -split '\s*,\s*' | Where-Object { $_ }
         $toInstall = @()
         foreach ($font in $requested) {
-            if (Test-NfListContains -List $catalog -Value $font) {
+            if ($catalog -contains $font) {
                 $toInstall += $font
             }
             else {
@@ -1667,10 +1639,10 @@ function Invoke-NfUninstallWorkflow {
     }
 
     if ($script:FontsWasBound) {
-        $requested = Get-NfCanonicalIdsFromCsv -Csv $script:OptFonts
+        $requested = $script:OptFonts -split '\s*,\s*' | Where-Object { $_ }
         $toUninstall = @()
         foreach ($font in $requested) {
-            if (Test-NfListContains -List $installed -Value $font) {
+            if ($installed -contains $font) {
                 $toUninstall += $font
             }
             else {
@@ -1782,7 +1754,7 @@ function Invoke-NfMain {
     try {
         Assert-NfValidOptions
     }
-    catch [NfUsageException] {
+    catch {
         Write-NfError $_.Exception.Message
         exit 1
     }
@@ -1817,10 +1789,6 @@ function Invoke-NfMain {
 
         Invoke-NfInstallWorkflow
         exit 0
-    }
-    catch [NfUsageException] {
-        Write-NfError $_.Exception.Message
-        exit 1
     }
     catch [System.Management.Automation.ParameterBindingException] {
         Write-NfError $_.Exception.Message
