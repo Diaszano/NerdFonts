@@ -24,6 +24,7 @@ OPT_VERSION=0
 OPT_HELP=0
 OPT_QUIET="${QUIET:-0}"
 OPT_NO_COLOR=0
+OPT_JOBS="${NF_JOBS:-4}"
 
 # Colors (disabled when NO_COLOR is set or --no-color is specified)
 COLOR_RED='\033[0;31m'
@@ -197,6 +198,7 @@ Actions:
 Options:
   --backend auto|brew|pacman|direct
                            Installation backend (default: auto).
+  -j, --jobs NUM           Number of parallel download jobs for direct backend (default: 4).
   --dry-run                Print what would be done without touching the system.
   --yes                    Reserved: accept future prompts (no effect yet).
   --quiet                  Suppress step/success/warning messages.
@@ -244,6 +246,18 @@ parse_args() {
       [[ $# -lt 2 ]] && die 1 "Option --backend requires an argument."
       OPT_BACKEND=$2; shift 2 ;;
     --backend=*) OPT_BACKEND="${1#*=}"; shift ;;
+    -j | --jobs)
+      [[ $# -lt 2 ]] && die 1 "Option --jobs requires an argument."
+      if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+        die 1 "Option --jobs requires a positive integer."
+      fi
+      OPT_JOBS=$2; shift 2 ;;
+    --jobs=*)
+      local val="${1#*=}"
+      if ! [[ "$val" =~ ^[1-9][0-9]*$ ]]; then
+        die 1 "Option --jobs requires a positive integer."
+      fi
+      OPT_JOBS="$val"; shift ;;
     --dry-run) OPT_DRY_RUN=1; shift ;;
     --yes) OPT_YES=1; shift ;;
     --quiet) OPT_QUIET=1; shift ;;
@@ -703,36 +717,71 @@ direct_dry_run_uninstall() {
   echo "[dry-run] Would remove font files matching '${1}' from $(direct_font_dir)."
 }
 
+direct_install_single() {
+  local id=$1
+  local target_dir=$2
+  local status_dir=$3
+  local asset
+  asset=$(direct_id_to_asset "$id")
+  local url="https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+
+  echo "Installing ${id} (${asset})..."
+  local tmp_archive
+  tmp_archive=$(mktemp)
+
+  local downloaded=0
+  if command -v curl >/dev/null 2>&1; then
+    if curl -sL -o "$tmp_archive" "$url"; then
+      downloaded=1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if wget -qO "$tmp_archive" "$url"; then
+      downloaded=1
+    fi
+  fi
+
+  local extracted=0
+  if [[ "$downloaded" == 1 && -s "$tmp_archive" ]]; then
+    if tar -xJf "$tmp_archive" -C "$target_dir" 2>/dev/null; then
+      extracted=1
+    fi
+  fi
+
+  if [[ "$extracted" == 1 ]]; then
+    print_success "Successfully installed ${id}."
+    touch "${status_dir}/${id}.ok"
+  else
+    print_warn "Failed to install ${id}."
+    touch "${status_dir}/${id}.fail"
+  fi
+  rm -f "$tmp_archive"
+}
+
 direct_install_fonts() {
   local ids=("$@")
   local target_dir
   target_dir=$(direct_font_dir)
   mkdir -p "$target_dir"
 
+  local max_jobs="${OPT_JOBS:-4}"
+  local status_dir
+  status_dir=$(mktemp -d)
+
   for id in "${ids[@]}"; do
-    local asset
-    asset=$(direct_id_to_asset "$id")
-    local url="https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+    direct_install_single "$id" "$target_dir" "$status_dir" &
 
-    echo "Installing ${id} (${asset})..."
-    local tmp_archive
-    tmp_archive=$(mktemp)
+    while [[ $(jobs -p | wc -l) -ge $max_jobs ]]; do
+      sleep 0.1
+    done
+  done
+  wait
 
-    local downloaded=0
-    if command -v curl >/dev/null 2>&1; then
-      curl -sL -o "$tmp_archive" "$url" && downloaded=1
-    elif command -v wget >/dev/null 2>&1; then
-      wget -qO "$tmp_archive" "$url" && downloaded=1
-    fi
-
-    if [[ "$downloaded" == 1 && -s "$tmp_archive" ]] && tar -xJf "$tmp_archive" -C "$target_dir" 2>/dev/null; then
-      print_success "Successfully installed ${id}."
-    else
-      print_warn "Failed to install ${id}."
+  for id in "${ids[@]}"; do
+    if [[ -f "${status_dir}/${id}.fail" ]] || [[ ! -f "${status_dir}/${id}.ok" ]]; then
       FAILED_FONTS+=("$id")
     fi
-    rm -f "$tmp_archive"
   done
+  rm -rf "$status_dir"
 
   if command -v fc-cache >/dev/null 2>&1; then
     fc-cache -f "$target_dir" >/dev/null 2>&1 || true

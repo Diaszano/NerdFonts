@@ -112,22 +112,38 @@ function Show-NfDryRun {
 function Install-NfFonts {
     param([string[]]$Ids)
     $fontDir = Get-NfFontDir; $markerDir = Get-NfMarkerDir
+    $pending = @()
     foreach ($id in $Ids) {
         if ($DryRun) { Show-NfDryRun -Act 'install' -Id $id; continue }
         if (Test-NfFontInstalled $id) { Write-NfWarn "$id is already installed. Skipping."; continue }
-        if ($script:ResolvedBackend -eq 'winget') {
+        $pending += $id
+    }
+    if ($DryRun -or $pending.Count -eq 0) { return }
+
+    if ($script:ResolvedBackend -eq 'winget') {
+        foreach ($id in $pending) {
             $pkg = "NerdFonts.$((Get-NfDirectAsset $id) -replace '\.zip$', '')"
             Write-Host "Installing $pkg..."
             & winget install --exact --id $pkg --silent --accept-package-agreements --accept-source-agreements
             if ($LASTEXITCODE -eq 0) { Write-NfSuccess "Successfully installed $pkg." }
             else { Write-NfWarn "Failed to install $pkg."; $script:FailedFonts.Add($id) }
-            continue
         }
+        return
+    }
+
+    $pool = [System.Collections.Generic.List[psobject]]::new()
+    foreach ($id in $pending) {
         $asset = Get-NfDirectAsset $id; $url = "https://github.com/$($script:GitHubRepo)/releases/latest/download/$asset"
-        $tempZip = Join-Path ([IO.Path]::GetTempPath()) $asset; $tempExtract = Join-Path ([IO.Path]::GetTempPath()) "nf-extract-$id"
+        $tempZip = Join-Path ([IO.Path]::GetTempPath()) $asset; $wc = New-Object System.Net.WebClient
+        $task = $wc.DownloadFileTaskAsync($url, $tempZip)
+        $pool.Add([pscustomobject]@{ Id = $id; Asset = $asset; Zip = $tempZip; WebClient = $wc; Task = $task })
+    }
+
+    foreach ($item in $pool) {
+        $id = $item.Id; $tempZip = $item.Zip; $tempExtract = Join-Path ([IO.Path]::GetTempPath()) "nf-extract-$id"
         $ok = $true
         try {
-            Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing -TimeoutSec 300 -ErrorAction Stop
+            $item.Task.GetAwaiter().GetResult()
             New-Item -ItemType Directory -Path $tempExtract -Force | Out-Null
             Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force -ErrorAction Stop
             if (-not (Test-Path $fontDir)) { New-Item -ItemType Directory -Path $fontDir -Force | Out-Null }
@@ -141,7 +157,10 @@ function Install-NfFonts {
                 }
             }
         } catch { Write-NfWarn "Failed to install ${id}: $($_.Exception.Message)"; $ok = $false }
-        finally { Remove-Item -Path $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue }
+        finally {
+            $item.WebClient.Dispose()
+            Remove-Item -Path $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+        }
 
         if ($ok) {
             if (-not (Test-Path $markerDir)) { New-Item -ItemType Directory -Path $markerDir -Force | Out-Null }
