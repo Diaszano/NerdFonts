@@ -1133,113 +1133,19 @@ function Get-NfDirectFontFiles {
     return $files
 }
 
-function Get-NfFontRegistryEntries {
-    $key = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    if (-not (Test-Path $key)) { return @() }
-    $props = Get-ItemProperty -Path $key
-    $reserved = @('PSPath', 'PSParentPath', 'PSChildName', 'PSDrive', 'PSProvider')
-    $entries = @()
-    foreach ($prop in $props.PSObject.Properties) {
-        if ($reserved -contains $prop.Name) { continue }
-        if ($prop.Value -isnot [string]) { continue }
-        $entries += [pscustomobject]@{ Name = $prop.Name; Path = $prop.Value }
+function Install-NfFontNative {
+    param([string]$FilePath)
+    if ($script:IsWindowsHost) {
+        $shell = New-Object -ComObject Shell.Application
+        $fontsFolder = $shell.Namespace(0x14) # 0x14 = Fonts folder
+        $fontsFolder.CopyHere($FilePath, 0x10) # 0x10 = Yes to all / suppress prompt
     }
-    return $entries
-}
-
-function Test-NfDirectFontRegistered {
-    param([string]$Id)
-    if (-not $script:IsWindowsHost) { return $false }
-    $needle = ("\{0}*nerdfont*" -f $Id)
-    foreach ($entry in (Get-NfFontRegistryEntries)) {
-        $value = ''
-        if ($entry.Path) { $value = $entry.Path.ToLowerInvariant().Replace('/', '\') }
-        if ($value.ToLowerInvariant().Contains($needle.ToLowerInvariant())) { return $true }
-    }
-    return $false
 }
 
 function Test-NfDirectFontInstalled {
     param([string]$Id)
     if (Test-Path (Join-Path (Get-NfDirectMarkerDir) $Id)) { return $true }
-    if (@(Get-NfDirectFontFiles -Id $Id).Count -gt 0) { return $true }
-    return (Test-NfDirectFontRegistered -Id $Id)
-}
-
-# Get-NfFontInternalName extracts the internal family name from the font file
-# itself via System.Drawing (PrivateFontCollection). When that is unavailable
-# (non-Windows hosts, sandboxed environments) the base file name is used.
-function Get-NfFontInternalName {
-    param([string]$FilePath)
-    if ($script:IsWindowsHost) {
-        try {
-            Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-            $collection = New-Object System.Drawing.Text.PrivateFontCollection
-            $collection.AddFontFile($FilePath)
-            $name = $collection.Families[0].Name
-            $collection.Dispose()
-            if ($name) { return $name }
-        }
-        catch {
-            # Fall through to the file-name fallback below.
-        }
-    }
-    return [IO.Path]::GetFileNameWithoutExtension($FilePath)
-}
-
-# Register-NfFontFile adds "HKCU:\...\Fonts\<InternalName> (TrueType)" pointing
-# to the installed file. Returns $true on success.
-function Register-NfFontFile {
-    param([string]$FilePath)
-    $key = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    try {
-        if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-        $internalName = Get-NfFontInternalName -FilePath $FilePath
-        $baseName = "$internalName (TrueType)"
-        $finalName = $baseName
-        $existing = Get-NfFontRegistryEntries
-        $counter = 1
-        while ($true) {
-            $conflict = $null
-            foreach ($entry in $existing) {
-                if ($entry.Name -ieq $finalName) { $conflict = $entry; break }
-            }
-            if (-not $conflict) { break }
-            if ($conflict.Path -ieq $FilePath) { break } # already registered
-            $counter = $counter + 1
-            $finalName = "$internalName ($counter) (TrueType)"
-        }
-        New-ItemProperty -Path $key -Name $finalName -Value $FilePath -PropertyType String -Force | Out-Null
-        return $true
-    }
-    catch {
-        Write-NfWarn "Could not register '$([IO.Path]::GetFileName($FilePath))' in the user font registry: $($_.Exception.Message)"
-        return $false
-    }
-}
-
-# Unregister-NfFontFilesById removes every registry entry whose stored file
-# path matches "<...>\<id>*nerdfont*". Returns the number of removed entries.
-function Unregister-NfFontFilesById {
-    param([string]$Id)
-    if (-not $script:IsWindowsHost) { return 0 }
-    $key = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    $needle = ("\{0}*nerdfont*" -f $Id).ToLowerInvariant()
-    $removed = 0
-    foreach ($entry in (Get-NfFontRegistryEntries)) {
-        $value = ''
-        if ($entry.Path) { $value = $entry.Path.ToLowerInvariant().Replace('/', '\') }
-        if ($value.Contains($needle)) {
-            try {
-                Remove-ItemProperty -Path $key -Name $entry.Name -ErrorAction Stop
-                $removed = $removed + 1
-            }
-            catch {
-                Write-NfWarn "Could not remove registry entry '$($entry.Name)': $($_.Exception.Message)"
-            }
-        }
-    }
-    return $removed
+    return (@(Get-NfDirectFontFiles -Id $Id).Count -gt 0)
 }
 
 function Show-NfDirectDryRunInstall {
@@ -1323,14 +1229,10 @@ function Install-NfDirectFonts {
                 }
             }
 
-            if ($ok -and $script:IsWindowsHost) {
+            if ($ok) {
                 foreach ($fontFile in $fontFiles) {
-                    $target = Join-Path $fontDir $fontFile.Name
-                    if (-not (Register-NfFontFile -FilePath $target)) { $ok = $false }
+                    Install-NfFontNative -FilePath (Join-Path $fontDir $fontFile.Name)
                 }
-            }
-            elseif ($ok -and (-not $script:IsWindowsHost)) {
-                Write-NfWarn 'Not running on Windows: font files were copied but registry registration was skipped.'
             }
 
             if ($ok) {
@@ -1364,8 +1266,6 @@ function Uninstall-NfDirectFonts {
                 Write-NfWarn "Could not remove '$filePath': $($_.Exception.Message)"
             }
         }
-
-        if ((Unregister-NfFontFilesById -Id $id) -gt 0) { $removedAny = $true }
 
         $marker = Join-Path $markerDir $id
         if (Test-Path $marker) {
@@ -1529,47 +1429,15 @@ function Show-NfInstalledCatalog {
     foreach ($id in $installed) { Write-Output $id }
 }
 
-# Select-NfItemsInteractive is the native replacement for the bash fzf
-# selector: a numbered console menu accepting comma-separated numbers,
-# "a"/"all", or an empty answer to cancel.
 function Select-NfItemsInteractive {
     param([string[]]$Items, [string]$PromptTitle)
-    if (-not [Environment]::UserInteractive) {
-        Write-NfWarn 'No interactive console available. Use -Fonts, -All or -UninstallAll instead.'
-        return @()
+    if (Get-Command Out-GridView -ErrorAction SilentlyContinue) {
+        return ($Items | Out-GridView -Title $PromptTitle -OutputMode Multiple)
     }
-
-    Show-NfPlain $PromptTitle
-    for ($index = 0; $index -lt $Items.Count; $index = $index + 1) {
-        $number = $index + 1
-        Show-NfPlain ("  {0,4}) {1}" -f $number, $Items[$index])
-    }
-
-    $answer = Read-Host "Selection (comma-separated numbers, 'a' for all, ENTER to cancel)"
-    $answer = ('' + $answer).Trim()
-    if (-not $answer) {
-        Write-NfWarn 'No fonts selected. Exiting without changes.'
-        return @()
-    }
-
-    if ($answer -ieq 'a' -or $answer -ieq 'all') { return @($Items) }
-
-    $chosen = @()
-    foreach ($token in $answer.Split(',')) {
-        $trimmed = $token.Trim()
-        if (-not $trimmed) { continue }
-        $numeric = 0
-        if (-not [int]::TryParse($trimmed, [ref]$numeric)) {
-            Write-NfWarn "Ignoring invalid selection '${trimmed}'."
-            continue
-        }
-        if ($numeric -lt 1 -or $numeric -gt $Items.Count) {
-            Write-NfWarn "Ignoring out-of-range selection '${trimmed}'."
-            continue
-        }
-        $chosen += $Items[$numeric - 1]
-    }
-    return $chosen
+    Write-Host $PromptTitle
+    $Items | ForEach-Object { Write-Host " - $_" }
+    $sel = Read-Host "Digite os nomes das fontes separados por vírgula"
+    return ($sel -split '\s*,\s*' | Where-Object { $_ })
 }
 
 function Invoke-NfInstallWorkflow {
