@@ -156,20 +156,3 @@ nf_run_priv() {
   fi
 }
 
-# -----------------------------------------------------------------------------
-# Backend dry-run hooks
-# -----------------------------------------------------------------------------
-# Backends may override these with "<name>_dry_run_install" /
-# "<name>_dry_run_uninstall" to print backend-specific action lines
-# (e.g., brew prints native cask names). These defaults are used when no
-# override exists.
-
-# backend_dry_run_install default dry-run line for installing font id $1.
-backend_dry_run_install() {
-  echo "[dry-run] Would install ${1}."
-}
-
-# backend_dry_run_uninstall default dry-run line for uninstalling font id $1.
-backend_dry_run_uninstall() {
-  echo "[dry-run] Would uninstall ${1}."
-}

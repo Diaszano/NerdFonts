@@ -23,17 +23,6 @@
 
 # shellcheck disable=SC2154
 
-# is_command_installed checks whether the given command exists in PATH.
-#
-# Arguments:
-#   $1 - Command name to check.
-#
-# Returns:
-#   0 if the command is found, non-zero otherwise.
-is_command_installed() {
-  command -v "$1" >/dev/null 2>&1
-}
-
 # print_step prints a highlighted informational step message.
 #
 # Usage:
@@ -80,13 +69,4 @@ die() {
   shift
   echo -e "${COLOR_RED}❗  $*${COLOR_RESET}" >&2
   exit "$code"
-}
-
-# print_error prints an error message to stderr and exits with status 1.
-# Retrocompatible wrapper around die for generic validation errors.
-#
-# Usage:
-#   print_error "Unknown argument: --bogus."
-print_error() {
-  die 1 "$*"
 }
