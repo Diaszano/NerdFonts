@@ -1,350 +1,1096 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+set -euo pipefail
 
 ###############################################################################
 # Script:        scripts/install.sh
-# Description:   Interactive installer for Nerd Fonts using Homebrew and fzf.
-#
-# Requirements:
-#   - Bash (recommended: 4.x+)
-#   - Homebrew (https://brew.sh)
-#   - fzf (installed automatically via Homebrew if missing)
-#
-# Usage:
-#   ./scripts/install.sh [OPTIONS]
-#
-# Options:
-#   --all        Install all available Nerd Fonts without interactive selection.
-#   -h, --help   Show this help message and exit.
-#
-# Default behavior:
-#   - Discover available Nerd Fonts casks via Homebrew.
-#   - Present the list in fzf for multi-selection (TAB to select, ENTER to confirm).
-#   - Install all fonts selected in fzf using Homebrew casks.
-#
-# Exit codes:
-#   0   Script completed successfully.
-#   1   Validation, dependency or runtime error.
-#
-# Notes:
-#   - Intended for macOS and Linux environments where Homebrew is available.
-#   - This script only installs fonts; it does not change your terminal/editor
-#     configuration to start using them.
+# Description:   Self-contained installer for Nerd Fonts supporting Homebrew,
+#                Pacman, and direct GitHub release downloads.
 ###############################################################################
 
-# Enable strict error handling:
-# - -e: exit on any command failure
-# - -u: treat unset variables as errors
-# - -o pipefail: propagate failures in pipelines
-set -euo pipefail
-IFS=$'\n\t'
+INSTALLER_VERSION="dev"
+[[ -n "${INSTALLER_VERSION_OVERRIDE:-}" ]] && INSTALLER_VERSION="$INSTALLER_VERSION_OVERRIDE"
 
-# -----------------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------------
-FZF_PROMPT="Select Nerd Fonts: "
-FZF_HEIGHT="60%"
-FZF_LAYOUT="reverse"
+# CLI option state
+OPT_ALL=0
+OPT_FONTS=""
+OPT_LIST=0
+OPT_INSTALLED=0
+OPT_UNINSTALL_MODE=""
+OPT_DRY_RUN=0
+OPT_YES=0
+OPT_BACKEND="auto"
+OPT_VERSION=0
+OPT_HELP=0
+OPT_QUIET="${QUIET:-0}"
+OPT_NO_COLOR=0
+OPT_JOBS="${NF_JOBS:-4}"
 
-# -----------------------------------------------------------------------------
-# Colors
-# -----------------------------------------------------------------------------
+# Colors (disabled when NO_COLOR is set or --no-color is specified)
 COLOR_RED='\033[0;31m'
 COLOR_GREEN='\033[0;32m'
 COLOR_YELLOW='\033[0;33m'
 COLOR_CYAN='\033[0;36m'
 COLOR_RESET='\033[0m'
 
-# -----------------------------------------------------------------------------
-# Logging & helpers
-# -----------------------------------------------------------------------------
+if [[ -n "${NO_COLOR:-}" ]]; then
+  COLOR_RED=''
+  COLOR_GREEN=''
+  COLOR_YELLOW=''
+  COLOR_CYAN=''
+  COLOR_RESET=''
+fi
 
-# usage prints script usage information and a short help message.
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
-
-Options:
-  --all        Install all available Nerd Fonts without interactive selection.
-  -h, --help   Show this help message and exit.
-
-Default behavior:
-  - Fetch available Nerd Fonts casks via Homebrew.
-  - Let you select fonts with fzf (TAB to multi-select, ENTER to confirm).
-  - Install all selected fonts via Homebrew casks.
-
-Examples:
-  # Interactive selection
-  $(basename "$0")
-
-  # Install all available Nerd Fonts without prompts
-  $(basename "$0") --all
-
-EOF
+disable_colors() {
+  COLOR_RED=''
+  COLOR_GREEN=''
+  COLOR_YELLOW=''
+  COLOR_CYAN=''
+  COLOR_RESET=''
 }
 
-# is_command_installed checks whether the given command exists in PATH.
-#
-# Arguments:
-#   $1 - Command name to check.
-#
-# Returns:
-#   0 if the command is found, non-zero otherwise.
-is_command_installed() {
-  command -v "$1" >/dev/null 2>&1
+# FZF default styling
+FZF_PROMPT="Select Nerd Fonts: "
+FZF_HEIGHT="60%"
+FZF_LAYOUT="reverse"
+
+GITHUB_REPO="${GITHUB_REPO:-ryanoasis/nerd-fonts}"
+BACKEND_AUTO_ORDER=(brew pacman direct)
+RESOLVED_BACKEND=""
+DETECTED_OS=""
+CACHED_FONT_LIST=""
+CACHED_FONT_LIST_BACKEND=""
+CACHED_INSTALLED_LIST=""
+FAILED_FONTS=()
+
+# -----------------------------------------------------------------------------
+# Logging and Output Helpers
+# -----------------------------------------------------------------------------
+
+die() {
+  local code=$1
+  shift
+  echo -e "${COLOR_RED}❗  $*${COLOR_RESET}" >&2
+  exit "$code"
 }
 
-# print_step prints a highlighted informational step message.
-#
-# Usage:
-#   print_step "Fetching fonts..."
 print_step() {
+  [[ "$OPT_QUIET" == 1 ]] && return 0
   echo -e "\n${COLOR_CYAN}➜  $*${COLOR_RESET}\n"
 }
 
-# print_success prints a success message.
-#
-# Usage:
-#   print_success "All fonts installed."
 print_success() {
+  [[ "$OPT_QUIET" == 1 ]] && return 0
   echo -e "\n${COLOR_GREEN}✅  $*${COLOR_RESET}\n"
 }
 
-# print_warn prints a non-fatal warning message.
-#
-# Usage:
-#   print_warn "fzf is not installed; installing now..."
 print_warn() {
+  [[ "$OPT_QUIET" == 1 ]] && return 0
   echo -e "${COLOR_YELLOW}⚠️  $*${COLOR_RESET}"
 }
 
-# print_error prints an error message to stderr and exits with status 1.
-#
-# Usage:
-#   print_error "Homebrew is not installed."
-print_error() {
-  echo -e "${COLOR_RED}❗  $*${COLOR_RESET}" >&2
-  exit 1
-}
-
-# -----------------------------------------------------------------------------
-# Dependency management
-# -----------------------------------------------------------------------------
-
-# ensure_brew_available verifies that Homebrew is installed and reachable.
-#
-# Fails fast with an actionable message when Homebrew is not present.
-ensure_brew_available() {
-  if ! is_command_installed "brew"; then
-    print_error "Homebrew is not installed. Please install it first: https://brew.sh"
+backend_debug() {
+  if [[ "${NF_DEBUG_BACKEND:-}" == "1" ]]; then
+    printf '[debug] %s\n' "$1" >&2
   fi
 }
 
-# ensure_fzf_available ensures that fzf is installed, installing it via Homebrew
-# when it is not already available on the system.
+nf_run_priv() {
+  if [[ $EUID -eq 0 ]] || ! command -v sudo >/dev/null 2>&1; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# OS Detection & Backend Resolution
+# -----------------------------------------------------------------------------
+
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) DETECTED_OS="macos" ;;
+    Linux)  DETECTED_OS="linux" ;;
+    *)      DETECTED_OS="unknown" ;;
+  esac
+}
+
+probe_backend_catalog() {
+  local name=$1
+  local list=""
+  if list=$("${name}_list_fonts" 2>/dev/null); then
+    PROBE_RESULT="$list"
+    CACHED_FONT_LIST="$list"
+    CACHED_FONT_LIST_BACKEND="$name"
+  else
+    PROBE_RESULT=""
+    CACHED_FONT_LIST=""
+    CACHED_FONT_LIST_BACKEND=""
+  fi
+}
+
+resolve_backend() {
+  local requested=${1:-auto}
+  detect_os
+
+  if [[ "$requested" != "auto" ]]; then
+    RESOLVED_BACKEND="$requested"
+    if [[ "$requested" != "direct" ]] && ! "${requested}_is_available"; then
+      print_warn "Backend '${requested}' is not available on this system."
+    elif [[ "$requested" != "direct" ]]; then
+      probe_backend_catalog "$requested"
+      if [[ -z "$PROBE_RESULT" ]]; then
+        print_warn "Backend '${requested}' reported no Nerd Fonts packages."
+      fi
+    fi
+    backend_debug "backend=${RESOLVED_BACKEND}"
+    return 0
+  fi
+
+  local candidate
+  for candidate in "${BACKEND_AUTO_ORDER[@]}"; do
+    "${candidate}_is_available" || continue
+    backend_debug "probing candidate=${candidate}"
+    probe_backend_catalog "$candidate"
+    if [[ -n "$PROBE_RESULT" ]]; then
+      RESOLVED_BACKEND="$candidate"
+      backend_debug "backend=${RESOLVED_BACKEND}"
+      return 0
+    fi
+  done
+
+  if direct_is_available; then
+    RESOLVED_BACKEND="direct"
+    CACHED_FONT_LIST=""
+    CACHED_FONT_LIST_BACKEND=""
+    backend_debug "backend=${RESOLVED_BACKEND}"
+    return 0
+  fi
+
+  die 2 "No supported installation backend found. Install one of: brew, pacman; or provide curl (or wget) plus tar for direct downloads."
+}
+
+# -----------------------------------------------------------------------------
+# CLI Parsing & Validation
+# -----------------------------------------------------------------------------
+
+usage() {
+  cat <<'EOF'
+Usage: install.sh [OPTIONS]
+
+Install, inspect and uninstall Nerd Fonts through multiple backends
+(Homebrew, system package managers or direct downloads).
+
+Actions:
+  (default)                Interactive fzf multi-select installation.
+  --all                    Install all available Nerd Fonts (non-interactive).
+  --fonts "FONT[,FONT]"    Install the named fonts (non-interactive). Spaces
+                           after commas are tolerated; unknown names produce a
+                           warning and are skipped. FONT values are canonical
+                           ids (e.g., firacode, jetbrainsmono, hack).
+  --list                   Print the available Nerd Fonts (one per line) and exit.
+  --installed              Print the installed Nerd Fonts ids (one per line) and exit.
+  --uninstall [all|LIST]   Uninstall fonts. Without a value, opens the fzf
+                           selector over the installed fonts. With "all",
+                           removes every installed Nerd Font. Otherwise LIST is
+                           a comma-separated set of fonts to remove.
+
+Options:
+  --backend auto|brew|pacman|direct
+                           Installation backend (default: auto).
+  -j, --jobs NUM           Number of parallel download jobs for direct backend (default: 4).
+  --dry-run                Print what would be done without touching the system.
+  --yes                    Reserved: accept future prompts (no effect yet).
+  --quiet                  Suppress step/success/warning messages.
+  --no-color               Disable colored output.
+  --version                Print version information and exit.
+  -h, --help               Show this help message and exit.
+EOF
+}
+
+normalize_font_list() {
+  printf '%s' "$1" | tr -d ' ' | tr ',' '\n' | grep -v '^$'
+}
+
+validate_arg_combination() {
+  local actions=0
+  [[ "$OPT_ALL" == 1 ]] && actions=$((actions + 1))
+  [[ -n "$OPT_FONTS" ]] && actions=$((actions + 1))
+  [[ "$OPT_LIST" == 1 ]] && actions=$((actions + 1))
+  [[ "$OPT_INSTALLED" == 1 ]] && actions=$((actions + 1))
+  [[ -n "$OPT_UNINSTALL_MODE" ]] && actions=$((actions + 1))
+
+  if ((actions > 1)); then
+    die 1 "Apenas uma ação (--all, --fonts, --list, --installed, --uninstall) pode ser especificada."
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --all) OPT_ALL=1; shift ;;
+    --fonts)
+      [[ $# -lt 2 ]] && die 1 "Option --fonts requires an argument."
+      OPT_FONTS=$2; shift 2 ;;
+    --fonts=*) OPT_FONTS="${1#*=}"; shift ;;
+    --list) OPT_LIST=1; shift ;;
+    --installed) OPT_INSTALLED=1; shift ;;
+    --uninstall)
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        OPT_UNINSTALL_MODE=$2; shift 2
+      else
+        OPT_UNINSTALL_MODE="interactive"; shift
+      fi ;;
+    --uninstall=*) OPT_UNINSTALL_MODE="${1#*=}"; shift ;;
+    --backend)
+      [[ $# -lt 2 ]] && die 1 "Option --backend requires an argument."
+      OPT_BACKEND=$2; shift 2 ;;
+    --backend=*) OPT_BACKEND="${1#*=}"; shift ;;
+    -j | --jobs)
+      [[ $# -lt 2 ]] && die 1 "Option --jobs requires an argument."
+      if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+        die 1 "Option --jobs requires a positive integer."
+      fi
+      OPT_JOBS=$2; shift 2 ;;
+    --jobs=*)
+      local val="${1#*=}"
+      if ! [[ "$val" =~ ^[1-9][0-9]*$ ]]; then
+        die 1 "Option --jobs requires a positive integer."
+      fi
+      OPT_JOBS="$val"; shift ;;
+    --dry-run) OPT_DRY_RUN=1; shift ;;
+    --yes) OPT_YES=1; shift ;;
+    --quiet) OPT_QUIET=1; shift ;;
+    --no-color) OPT_NO_COLOR=1; disable_colors; shift ;;
+    --version) OPT_VERSION=1; shift ;;
+    -h | --help) OPT_HELP=1; shift ;;
+    *) die 1 "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Dependency Management
+# -----------------------------------------------------------------------------
+
 ensure_fzf_available() {
-  if is_command_installed "fzf"; then
+  if command -v fzf >/dev/null 2>&1; then
     return 0
   fi
 
-  print_warn "fzf is not installed. Attempting to install it with Homebrew..."
-  if brew install fzf; then
-    print_success "fzf successfully installed."
-  else
-    print_error "Failed to install fzf. Please install it manually and re-run this script."
+  if [[ "$RESOLVED_BACKEND" == "brew" ]]; then
+    print_warn "fzf não está instalado. Tentando instalar via Homebrew..."
+    if brew install fzf; then
+      print_success "fzf instalado com sucesso."
+      return 0
+    fi
   fi
+
+  die 2 "fzf é necessário para o modo interativo. Instale-o manualmente ou use --all / --fonts."
 }
 
-# check_dependencies validates all required dependencies before proceeding with
-# the main workflow. This function is idempotent and safe to call multiple times.
 check_dependencies() {
-  ensure_brew_available
-  ensure_fzf_available
+  case "$RESOLVED_BACKEND" in
+  brew)
+    command -v brew >/dev/null 2>&1 || die 2 "Homebrew não encontrado: https://brew.sh"
+    ;;
+  direct)
+    (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1) && command -v tar >/dev/null 2>&1 || \
+      die 2 "O backend direct requer curl/wget e tar."
+    ;;
+  esac
 }
 
 # -----------------------------------------------------------------------------
-# Domain logic
+# Backend: Homebrew
 # -----------------------------------------------------------------------------
 
-# is_font_installed checks if a given font cask is already installed via Homebrew.
-#
-# Arguments:
-#   $1 - Font cask name (e.g., font-jetbrains-mono-nerd-font).
-#
-# Returns:
-#   0 if the cask is already installed, non-zero otherwise.
-is_font_installed() {
-  local font=$1
+brew_is_available() { command -v brew >/dev/null 2>&1; }
 
-  if brew list --cask "$font" >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
+brew_cask_to_id() {
+  local id=$1
+  id="${id#font-}"
+  id="${id%-nerd-font}"
+  id="${id//-/}"
+  printf '%s' "$id"
 }
 
-# fetch_nerd_fonts retrieves the list of available Nerd Fonts casks via Homebrew.
-#
-# Output:
-#   Prints one cask name per line to stdout.
-#
-# Notes:
-#   - In case of a Homebrew tap inconsistency, a set of suggested recovery
-#     commands is printed to help the user restore the taps.
-fetch_nerd_fonts() {
+brew_id_to_cask() {
+  printf 'font-%s-nerd-font' "$1"
+}
+
+brew_list_fonts() {
   local search_output
-  if ! search_output=$(brew search '/font-.*-nerd-font/' 2>/dev/null); then
-    print_error "Failed to search Nerd Fonts via Homebrew.
-
-Suggested manual recovery steps (use with caution):
-
-  rm -rf \"\$(brew --repo homebrew/core)\"
-  brew tap homebrew/core --force
-  brew untap --force homebrew/cask || true
-  brew tap homebrew/cask --force
-
-After that, re-run this script."
-  fi
-
-  echo "$search_output" |
-    awk '{ print $1 }'
+  search_output=$(brew search '/font-.*-nerd-font/' 2>/dev/null) || die 2 "Failed to search Nerd Fonts via Homebrew."
+  local cask
+  while IFS= read -r cask; do
+    [[ -z "$cask" ]] && continue
+    cask=$(printf '%s' "$cask" | awk '{ print $1 }')
+    case $cask in
+      font-*-nerd-font)
+        local id
+        id=$(brew_cask_to_id "$cask")
+        [[ -n "$id" ]] && printf '%s\n' "$id"
+        ;;
+    esac
+  done <<<"$search_output"
 }
 
-# select_fonts opens an interactive fzf selector and returns the chosen fonts.
-#
-# Arguments:
-#   $1 - List of fonts (one per line).
-#
-# Output:
-#   Prints the selected fonts (one per line) to stdout.
+brew_list_installed_fonts() {
+  local installed
+  installed=$(brew list --cask 2>/dev/null | grep 'nerd-font' || true)
+  [[ -z "$installed" ]] && return 0
+  local cask
+  while IFS= read -r cask; do
+    [[ -z "$cask" ]] && continue
+    local id
+    id=$(brew_cask_to_id "$cask")
+    [[ -n "$id" ]] && printf '%s\n' "$id"
+  done <<<"$installed"
+}
+
+brew_is_font_installed() {
+  brew list --cask "$(brew_id_to_cask "$1")" >/dev/null 2>&1
+}
+
+brew_dry_run_install() {
+  echo "[dry-run] Would install $(brew_id_to_cask "$1")."
+}
+
+brew_dry_run_uninstall() {
+  echo "[dry-run] Would uninstall $(brew_id_to_cask "$1")."
+}
+
+brew_install_fonts() {
+  local ids=("$@")
+  local casks=()
+  local id
+  for id in "${ids[@]}"; do
+    casks+=("$(brew_id_to_cask "$id")")
+  done
+
+  echo "Installing ${casks[*]}..."
+  if brew install --cask "${casks[@]}"; then
+    for cask in "${casks[@]}"; do
+      print_success "Successfully installed ${cask}."
+    done
+    return 0
+  fi
+
+  for cask in "${casks[@]}"; do
+    echo "Installing ${cask}..."
+    if brew install --cask "$cask"; then
+      print_success "Successfully installed ${cask}."
+    else
+      print_warn "Failed to install ${cask}."
+      FAILED_FONTS+=("$(brew_cask_to_id "$cask")")
+    fi
+  done
+}
+
+brew_uninstall_fonts() {
+  local ids=("$@")
+  local casks=()
+  local id
+  for id in "${ids[@]}"; do
+    casks+=("$(brew_id_to_cask "$id")")
+  done
+
+  echo "Uninstalling ${casks[*]}..."
+  if brew uninstall --cask "${casks[@]}"; then
+    for cask in "${casks[@]}"; do
+      print_success "Successfully uninstalled ${cask}."
+    done
+    return 0
+  fi
+
+  for cask in "${casks[@]}"; do
+    echo "Uninstalling ${cask}..."
+    if brew uninstall --cask "$cask"; then
+      print_success "Successfully uninstalled ${cask}."
+    else
+      print_warn "Failed to uninstall ${cask}."
+      FAILED_FONTS+=("$(brew_cask_to_id "$cask")")
+    fi
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Backend: Pacman
+# -----------------------------------------------------------------------------
+
+pacman_is_available() { command -v pacman >/dev/null 2>&1; }
+
+pacman_normalize_pkg() {
+  local id=$1
+  [[ "$id" != *nerd* ]] && return 0
+  id="${id#ttf-}"
+  id="${id%-nerd-font}"
+  id="${id%-nerd}"
+  id="${id//-/}"
+  printf '%s' "$id"
+}
+
+pacman_id_to_pkg() {
+  printf 'ttf-%s-nerd' "$1"
+}
+
+pacman_list_fonts() {
+  local pkgs
+  pkgs=$(pacman -Sgq nerd-fonts 2>/dev/null) || pkgs=$(pacman -Ssq nerd 2>/dev/null) || pkgs=""
+  local pkg
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    local id
+    id=$(pacman_normalize_pkg "$pkg")
+    [[ -n "$id" ]] && printf '%s\n' "$id"
+  done <<<"$pkgs"
+}
+
+pacman_list_installed_fonts() {
+  local installed
+  installed=$(pacman -Qq 2>/dev/null | grep 'nerd' || true)
+  [[ -z "$installed" ]] && return 0
+  local pkg
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    local id
+    id=$(pacman_normalize_pkg "$pkg")
+    [[ -n "$id" ]] && printf '%s\n' "$id"
+  done <<<"$installed"
+}
+
+pacman_is_font_installed() {
+  pacman -Qi "$(pacman_id_to_pkg "$1")" >/dev/null 2>&1
+}
+
+pacman_dry_run_install() {
+  echo "[dry-run] Would install $(pacman_id_to_pkg "$1")."
+}
+
+pacman_dry_run_uninstall() {
+  echo "[dry-run] Would uninstall $(pacman_id_to_pkg "$1")."
+}
+
+pacman_install_fonts() {
+  local ids=("$@")
+  local pkgs=()
+  local id
+  for id in "${ids[@]}"; do
+    pkgs+=("$(pacman_id_to_pkg "$id")")
+  done
+
+  echo "Installing ${pkgs[*]}..."
+  if nf_run_priv pacman -S --noconfirm --needed "${pkgs[@]}"; then
+    for pkg in "${pkgs[@]}"; do
+      print_success "Successfully installed ${pkg}."
+    done
+    return 0
+  fi
+
+  for pkg in "${pkgs[@]}"; do
+    echo "Installing ${pkg}..."
+    if nf_run_priv pacman -S --noconfirm --needed "$pkg"; then
+      print_success "Successfully installed ${pkg}."
+    else
+      print_warn "Failed to install ${pkg}."
+      FAILED_FONTS+=("$(pacman_normalize_pkg "$pkg")")
+    fi
+  done
+}
+
+pacman_uninstall_fonts() {
+  local ids=("$@")
+  local pkgs=()
+  local id
+  for id in "${ids[@]}"; do
+    pkgs+=("$(pacman_id_to_pkg "$id")")
+  done
+
+  echo "Uninstalling ${pkgs[*]}..."
+  if nf_run_priv pacman -Rns --noconfirm "${pkgs[@]}"; then
+    for pkg in "${pkgs[@]}"; do
+      print_success "Successfully uninstalled ${pkg}."
+    done
+    return 0
+  fi
+
+  for pkg in "${pkgs[@]}"; do
+    echo "Uninstalling ${pkg}..."
+    if nf_run_priv pacman -Rns --noconfirm "$pkg"; then
+      print_success "Successfully uninstalled ${pkg}."
+    else
+      print_warn "Failed to uninstall ${pkg}."
+      FAILED_FONTS+=("$(pacman_normalize_pkg "$pkg")")
+    fi
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Backend: Direct (GitHub Releases)
+# -----------------------------------------------------------------------------
+
+direct_is_available() {
+  { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; } && command -v tar >/dev/null 2>&1
+}
+
+direct_font_dir() {
+  if [[ "${DETECTED_OS:-}" == "macos" ]] || [[ "$(uname -s)" == "Darwin" ]]; then
+    printf '%s' "${HOME}/Library/Fonts"
+  else
+    printf '%s' "${HOME}/.local/share/fonts"
+  fi
+}
+
+direct_id_to_asset() {
+  local id
+  id=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '-')
+  case "$id" in
+    0xproto) printf '0xProto.tar.xz' ;;
+    3270) printf '3270.tar.xz' ;;
+    agave) printf 'Agave.tar.xz' ;;
+    anonymouspro) printf 'AnonymousPro.tar.xz' ;;
+    arimo) printf 'Arimo.tar.xz' ;;
+    aurulentsansmono) printf 'AurulentSansMono.tar.xz' ;;
+    bigblueterminal) printf 'BigBlueTerminal.tar.xz' ;;
+    bitstreamverasansmono) printf 'BitstreamVeraSansMono.tar.xz' ;;
+    cascadiacode) printf 'CascadiaCode.tar.xz' ;;
+    cascadiamono) printf 'CascadiaMono.tar.xz' ;;
+    codenewroman) printf 'CodeNewRoman.tar.xz' ;;
+    comicshannsmono) printf 'ComicShannsMono.tar.xz' ;;
+    cousine) printf 'Cousine.tar.xz' ;;
+    daddytimemono) printf 'DaddyTimeMono.tar.xz' ;;
+    dejavusansmono) printf 'DejaVuSansMono.tar.xz' ;;
+    droidsansmono) printf 'DroidSansMono.tar.xz' ;;
+    envycoder) printf 'EnvyCodeR.tar.xz' ;;
+    fantasquesansmono) printf 'FantasqueSansMono.tar.xz' ;;
+    firamono) printf 'FiraMono.tar.xz' ;;
+    firacode) printf 'FiraCode.tar.xz' ;;
+    geistmono) printf 'GeistMono.tar.xz' ;;
+    gomono) printf 'Go-Mono.tar.xz' ;;
+    gohufont) printf 'Gohu.tar.xz' ;;
+    hack) printf 'Hack.tar.xz' ;;
+    hasklig) printf 'Hasklig.tar.xz' ;;
+    heavydata) printf 'HeavyData.tar.xz' ;;
+    hermit) printf 'Hermit.tar.xz' ;;
+    iawriter) printf 'iA-Writer.tar.xz' ;;
+    inconsolata) printf 'Inconsolata.tar.xz' ;;
+    inconsolatago) printf 'InconsolataGo.tar.xz' ;;
+    inconsolatalgc) printf 'InconsolataLGC.tar.xz' ;;
+    intefont) printf 'IntelOneMono.tar.xz' ;;
+    iosevka) printf 'Iosevka.tar.xz' ;;
+    iosevkaterm) printf 'IosevkaTerm.tar.xz' ;;
+    jetbrainsmono) printf 'JetBrainsMono.tar.xz' ;;
+    lekton) printf 'Lekton.tar.xz' ;;
+    liberationmono) printf 'LiberationMono.tar.xz' ;;
+    lilex) printf 'Lilex.tar.xz' ;;
+    martianmono) printf 'MartianMono.tar.xz' ;;
+    meslo) printf 'Meslo.tar.xz' ;;
+    monaspace) printf 'Monaspace.tar.xz' ;;
+    monofur) printf 'Monofur.tar.xz' ;;
+    monoid) printf 'Monoid.tar.xz' ;;
+    mononoki) printf 'Mononoki.tar.xz' ;;
+    mplus) printf 'MPlus.tar.xz' ;;
+    nerdfontssymbolsonly) printf 'NerdFontsSymbolsOnly.tar.xz' ;;
+    noto) printf 'Noto.tar.xz' ;;
+    opencodemonospace) printf 'OpenCodeMonospace.tar.xz' ;;
+    overpass) printf 'Overpass.tar.xz' ;;
+    profont) printf 'ProFont.tar.xz' ;;
+    proggyclean) printf 'ProggyClean.tar.xz' ;;
+    recursive) printf 'Recursive.tar.xz' ;;
+    roboto) printf 'Roboto.tar.xz' ;;
+    robotomono) printf 'RobotoMono.tar.xz' ;;
+    sharetechmono) printf 'ShareTechMono.tar.xz' ;;
+    sourcecodepro) printf 'SourceCodePro.tar.xz' ;;
+    spacemono) printf 'SpaceMono.tar.xz' ;;
+    terminess) printf 'Terminus.tar.xz' ;;
+    tinos) printf 'Tinos.tar.xz' ;;
+    ubuntu) printf 'Ubuntu.tar.xz' ;;
+    ubuntumono) printf 'UbuntuMono.tar.xz' ;;
+    ubuntusans) printf 'UbuntuSans.tar.xz' ;;
+    victormono) printf 'VictorMono.tar.xz' ;;
+    zedmono) printf 'ZedMono.tar.xz' ;;
+    *)
+      local cap
+      cap="$(printf '%s' "${1:0:1}" | tr '[:lower:]' '[:upper:]')${1:1}"
+      printf '%s.tar.xz' "$cap"
+      ;;
+  esac
+}
+
+DIRECT_KNOWN_FONTS="0xproto
+3270
+agave
+anonymouspro
+arimo
+aurulentsansmono
+bigblueterminal
+bitstreamverasansmono
+cascadiacode
+cascadiamono
+codenewroman
+comicshannsmono
+cousine
+daddytimemono
+dejavusansmono
+droidsansmono
+envycoder
+fantasquesansmono
+firacode
+firamono
+geistmono
+gohufont
+gomono
+hack
+hasklig
+heavydata
+hermit
+iawriter
+inconsolata
+inconsolatago
+inconsolatalgc
+iosevka
+iosevkaterm
+jetbrainsmono
+lekton
+liberationmono
+lilex
+martianmono
+meslo
+monaspace
+monofur
+monoid
+mononoki
+mplus
+nerdfontssymbolsonly
+noto
+overpass
+profont
+proggyclean
+recursive
+roboto
+robotomono
+sharetechmono
+sourcecodepro
+spacemono
+terminess
+tinos
+ubuntu
+ubuntumono
+ubuntusans
+victormono
+zedmono"
+
+direct_list_fonts() {
+  printf '%s\n' "$DIRECT_KNOWN_FONTS"
+}
+
+direct_is_font_installed() {
+  local target_dir
+  target_dir=$(direct_font_dir)
+  [[ -d "$target_dir" ]] || return 1
+  local found
+  found=$(find "$target_dir" -maxdepth 2 -iname "*$1*" 2>/dev/null | head -n 1)
+  [[ -n "$found" ]]
+}
+
+direct_list_installed_fonts() {
+  local target_dir
+  target_dir=$(direct_font_dir)
+  [[ -d "$target_dir" ]] || return 0
+  local id
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if direct_is_font_installed "$id"; then
+      printf '%s\n' "$id"
+    fi
+  done <<<"$DIRECT_KNOWN_FONTS"
+}
+
+direct_dry_run_install() {
+  local asset
+  asset=$(direct_id_to_asset "$1")
+  echo "[dry-run] Would download https://github.com/${GITHUB_REPO}/releases/latest/download/${asset} and extract to $(direct_font_dir)."
+}
+
+direct_dry_run_uninstall() {
+  echo "[dry-run] Would remove font files matching '${1}' from $(direct_font_dir)."
+}
+
+direct_install_single() {
+  local id=$1
+  local target_dir=$2
+  local status_dir=$3
+  local asset
+  asset=$(direct_id_to_asset "$id")
+  local url="https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+
+  echo "Installing ${id} (${asset})..."
+  local tmp_archive
+  tmp_archive=$(mktemp)
+
+  local downloaded=0
+  if command -v curl >/dev/null 2>&1; then
+    if curl -sL -o "$tmp_archive" "$url"; then
+      downloaded=1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if wget -qO "$tmp_archive" "$url"; then
+      downloaded=1
+    fi
+  fi
+
+  local extracted=0
+  if [[ "$downloaded" == 1 && -s "$tmp_archive" ]]; then
+    if tar -xJf "$tmp_archive" -C "$target_dir" 2>/dev/null; then
+      extracted=1
+    fi
+  fi
+
+  if [[ "$extracted" == 1 ]]; then
+    print_success "Successfully installed ${id}."
+    touch "${status_dir}/${id}.ok"
+  else
+    print_warn "Failed to install ${id}."
+    touch "${status_dir}/${id}.fail"
+  fi
+  rm -f "$tmp_archive"
+}
+
+direct_install_fonts() {
+  local ids=("$@")
+  local target_dir
+  target_dir=$(direct_font_dir)
+  mkdir -p "$target_dir"
+
+  local max_jobs="${OPT_JOBS:-4}"
+  local status_dir
+  status_dir=$(mktemp -d)
+
+  for id in "${ids[@]}"; do
+    direct_install_single "$id" "$target_dir" "$status_dir" &
+
+    while [[ $(jobs -p | wc -l) -ge $max_jobs ]]; do
+      sleep 0.1
+    done
+  done
+  wait
+
+  for id in "${ids[@]}"; do
+    if [[ -f "${status_dir}/${id}.fail" ]] || [[ ! -f "${status_dir}/${id}.ok" ]]; then
+      FAILED_FONTS+=("$id")
+    fi
+  done
+  rm -rf "$status_dir"
+
+  if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f "$target_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+direct_uninstall_fonts() {
+  local ids=("$@")
+  local target_dir
+  target_dir=$(direct_font_dir)
+  [[ -d "$target_dir" ]] || return 0
+
+  for id in "${ids[@]}"; do
+    local files
+    files=$(find "$target_dir" -maxdepth 2 -iname "*$id*" 2>/dev/null)
+    if [[ -n "$files" ]]; then
+      echo "$files" | xargs rm -f
+      print_success "Successfully uninstalled ${id}."
+    else
+      print_warn "'${id}' is not installed."
+    fi
+  done
+
+  if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f "$target_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Font Management & Dispatch Core
+# -----------------------------------------------------------------------------
+
+load_font_catalog() {
+  if [[ "$CACHED_FONT_LIST_BACKEND" == "$RESOLVED_BACKEND" && -n "$CACHED_FONT_LIST" ]]; then
+    return 0
+  fi
+  CACHED_FONT_LIST=$("${RESOLVED_BACKEND}_list_fonts")
+  CACHED_FONT_LIST_BACKEND="$RESOLVED_BACKEND"
+}
+
+load_installed_fonts() {
+  if [[ -n "$CACHED_INSTALLED_LIST" ]]; then
+    return 0
+  fi
+  CACHED_INSTALLED_LIST=$("${RESOLVED_BACKEND}_list_installed_fonts")
+}
+
+is_font_installed() {
+  "${RESOLVED_BACKEND}_is_font_installed" "$1"
+}
+
 select_fonts() {
   local fonts_list=$1
-
-  echo "$fonts_list" | fzf \
+  printf '%s\n' "$fonts_list" | fzf \
     --multi \
     --prompt="$FZF_PROMPT" \
     --height="$FZF_HEIGHT" \
     --layout="$FZF_LAYOUT"
 }
 
-# install_single_font installs a single font cask via Homebrew.
-#
-# Arguments:
-#   $1 - Font cask name.
-#
-# Behavior:
-#   - Skips installation if the font is already installed.
-#   - Logs success or failure for each font.
-install_single_font() {
-  local font=$1
-
-  if is_font_installed "$font"; then
-    print_warn "${font} is already installed. Skipping."
-    return 0
-  fi
-
-  echo "Installing ${font}..."
-  if brew install --cask "$font"; then
-    print_success "Successfully installed ${font}."
-  else
-    print_warn "Failed to install ${font}."
-  fi
+list_contains() {
+  local needle=$1
+  local haystack=$2
+  grep -Fxq "$needle" <<<"$haystack"
 }
 
-# install_all_fonts installs all fonts provided in the input list without any
-# interactive confirmation per font.
-#
-# Arguments:
-#   $1 - List of fonts (one per line) to be installed.
-install_all_fonts() {
-  local fonts=$1
-
-  print_step "Installing all available Nerd Fonts..."
+filter_font_list() {
+  local requested=$1
+  local target_list=$2
+  local warn_pattern=$3
+  local matched=""
+  local font
 
   while IFS= read -r font; do
     [[ -z "$font" ]] && continue
-    install_single_font "$font"
-  done <<<"$fonts"
+    if list_contains "$font" "$target_list"; then
+      matched+="${matched:+$'\n'}${font}"
+    else
+      print_warn "$(printf "$warn_pattern" "$font")"
+    fi
+  done <<<"$requested"
+
+  printf '%s' "$matched"
 }
 
-# prompt_install_selected_fonts installs all fonts selected via fzf.
-#
-# Arguments:
-#   $1 - List of selected fonts (one per line).
-#
-# Notes:
-#   - Despite the name, this function does not prompt per font; it installs
-#     all fonts passed as input. The only interactive step is the fzf selection.
-prompt_install_selected_fonts() {
-  local fonts=$1
-
-  while IFS= read -r font; do
-    [[ -z "$font" ]] && continue
-    install_single_font "$font"
-  done <<<"$fonts"
-}
-
-# -----------------------------------------------------------------------------
-# Main
-# -----------------------------------------------------------------------------
-
-# main is the entrypoint that orchestrates the installation workflow.
-#
-# Responsibilities:
-#   - Parse CLI arguments.
-#   - Validate dependencies.
-#   - Fetch available Nerd Fonts.
-#   - Orchestrate interactive selection or bulk installation (--all).
-main() {
-  local install_all=false
-
-  # Argument parsing
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-    --all)
-      install_all=true
-      shift
-      ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    *)
-      print_error "Unknown argument: $1"
-      ;;
-    esac
-  done
-
-  check_dependencies
-
-  print_step "Fetching available Nerd Fonts from Homebrew..."
-  local fonts
-  fonts=$(fetch_nerd_fonts)
-
-  if [[ -z "$fonts" ]]; then
-    print_error "No Nerd Fonts found. Please ensure Homebrew is up to date (brew update)."
+install_named_fonts() {
+  local to_install
+  to_install=$(filter_font_list "$1" "$2" "Unknown font '%s'. Skipping.")
+  if [[ -z "$to_install" ]]; then
+    die 3 "None of the requested fonts are available. Run with --list to see the valid names."
   fi
+  dispatch_install_fonts "$to_install"
+}
 
-  if [[ "$install_all" == true ]]; then
-    install_all_fonts "$fonts"
+uninstall_named_fonts() {
+  local to_uninstall
+  to_uninstall=$(filter_font_list "$1" "$2" "'%s' is not installed. Skipping.")
+  if [[ -z "$to_uninstall" ]]; then
+    die 3 "None of the requested fonts are installed. Run with --installed to see what is present."
+  fi
+  dispatch_uninstall_fonts "$to_uninstall"
+}
+
+dispatch_install_fonts() {
+  local fonts=$1
+  local id
+  local pending=()
+  FAILED_FONTS=()
+
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if [[ "$OPT_DRY_RUN" == 1 ]]; then
+      "${RESOLVED_BACKEND}_dry_run_install" "$id"
+    elif is_font_installed "$id"; then
+      print_warn "${id} is already installed. Skipping."
+    else
+      pending+=("$id")
+    fi
+  done <<<"$fonts"
+
+  [[ "$OPT_DRY_RUN" == 1 ]] && return 0
+  [[ ${#pending[@]} -eq 0 ]] && return 0
+  "${RESOLVED_BACKEND}_install_fonts" "${pending[@]}"
+}
+
+dispatch_uninstall_fonts() {
+  local fonts=$1
+  local id
+  local pending=()
+  FAILED_FONTS=()
+
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if [[ "$OPT_DRY_RUN" == 1 ]]; then
+      "${RESOLVED_BACKEND}_dry_run_uninstall" "$id"
+    elif ! is_font_installed "$id"; then
+      print_warn "${id} is not installed. Skipping."
+    else
+      pending+=("$id")
+    fi
+  done <<<"$fonts"
+
+  [[ "$OPT_DRY_RUN" == 1 ]] && return 0
+  [[ ${#pending[@]} -eq 0 ]] && return 0
+  "${RESOLVED_BACKEND}_uninstall_fonts" "${pending[@]}"
+}
+
+has_failed_fonts() {
+  [[ ${#FAILED_FONTS[@]} -gt 0 ]]
+}
+
+# -----------------------------------------------------------------------------
+# Command Actions & Orchestration
+# -----------------------------------------------------------------------------
+
+cmd_list_fonts() {
+  load_font_catalog
+  if [[ -z "$CACHED_FONT_LIST" ]]; then
+    die 3 "No Nerd Fonts found for the '${RESOLVED_BACKEND}' backend."
+  fi
+  printf '%s\n' "$CACHED_FONT_LIST"
+}
+
+cmd_list_installed_fonts() {
+  load_installed_fonts
+  if [[ -z "$CACHED_INSTALLED_LIST" ]]; then
+    print_warn "No Nerd Fonts are currently installed."
+    return 0
+  fi
+  printf '%s\n' "$CACHED_INSTALLED_LIST"
+}
+
+run_install() {
+  load_font_catalog
+
+  if [[ -n "$OPT_FONTS" ]]; then
+    local requested
+    requested=$(normalize_font_list "$OPT_FONTS")
+    [[ -z "$requested" ]] && die 1 "Option --fonts requires at least one font name."
+
+    print_step "Fetching available Nerd Fonts..."
+    [[ -z "$CACHED_FONT_LIST" ]] && die 3 "No Nerd Fonts found for backend '${RESOLVED_BACKEND}'."
+
+    install_named_fonts "$requested" "$CACHED_FONT_LIST"
+    if has_failed_fonts; then
+      die 4 "Some fonts failed to install (${FAILED_FONTS[*]})."
+    fi
     return 0
   fi
 
+  print_step "Fetching available Nerd Fonts..."
+  [[ -z "$CACHED_FONT_LIST" ]] && die 3 "No Nerd Fonts found for backend '${RESOLVED_BACKEND}'."
+
+  if [[ "$OPT_ALL" == 1 ]]; then
+    print_step "Installing all available Nerd Fonts..."
+    dispatch_install_fonts "$CACHED_FONT_LIST"
+    if has_failed_fonts; then
+      die 4 "Some fonts failed to install (${FAILED_FONTS[*]})."
+    fi
+    return 0
+  fi
+
+  ensure_fzf_available
   print_step "Select the Nerd Fonts you want to install (TAB to select multiple, ENTER to confirm)."
 
   local selected_fonts
-  selected_fonts=$(select_fonts "$fonts")
-
+  selected_fonts=$(select_fonts "$CACHED_FONT_LIST")
   if [[ -z "$selected_fonts" ]]; then
     print_warn "No fonts selected. Exiting without changes."
     exit 0
   fi
 
   print_step "Installing selected Nerd Fonts..."
-  prompt_install_selected_fonts "$selected_fonts"
+  dispatch_install_fonts "$selected_fonts"
+  if has_failed_fonts; then
+    die 4 "Some fonts failed to install (${FAILED_FONTS[*]})."
+  fi
+}
+
+run_uninstall() {
+  load_installed_fonts
+
+  if [[ "$OPT_UNINSTALL_MODE" == "interactive" ]]; then
+    ensure_fzf_available
+    if [[ -z "$CACHED_INSTALLED_LIST" ]]; then
+      print_warn "No Nerd Fonts are currently installed. Nothing to uninstall."
+      exit 0
+    fi
+
+    print_step "Select the Nerd Fonts you want to uninstall (TAB to select multiple, ENTER to confirm)."
+    local selected
+    selected=$(select_fonts "$CACHED_INSTALLED_LIST")
+    if [[ -z "$selected" ]]; then
+      print_warn "No fonts selected. Exiting without changes."
+      exit 0
+    fi
+
+    dispatch_uninstall_fonts "$selected"
+    if has_failed_fonts; then
+      die 4 "Some fonts failed to uninstall (${FAILED_FONTS[*]})."
+    fi
+    return 0
+  fi
+
+  if [[ "$OPT_UNINSTALL_MODE" == "all" ]]; then
+    if [[ -z "$CACHED_INSTALLED_LIST" ]]; then
+      print_warn "No Nerd Fonts are currently installed. Nothing to uninstall."
+      exit 0
+    fi
+
+    print_step "Uninstalling all installed Nerd Fonts..."
+    dispatch_uninstall_fonts "$CACHED_INSTALLED_LIST"
+    if has_failed_fonts; then
+      die 4 "Some fonts failed to uninstall (${FAILED_FONTS[*]})."
+    fi
+    return 0
+  fi
+
+  local requested
+  requested=$(normalize_font_list "$OPT_UNINSTALL_MODE")
+  [[ -z "$requested" ]] && die 1 "Option --uninstall requires a value: all, a comma-separated list, or nothing."
+
+  uninstall_named_fonts "$requested" "$CACHED_INSTALLED_LIST"
+  if has_failed_fonts; then
+    die 4 "Some fonts failed to uninstall (${FAILED_FONTS[*]})."
+  fi
 }
 
 # -----------------------------------------------------------------------------
-# Script execution
+# Main Entrypoint
 # -----------------------------------------------------------------------------
+
+main() {
+  parse_args "$@"
+  validate_arg_combination
+
+  trap 'printf "\n[abort] Interrupted.\n" >&2; exit 130' INT
+  trap 'printf "\n[abort] Interrupted.\n" >&2; exit 143' TERM
+
+  if [[ "$OPT_VERSION" == 1 ]]; then
+    printf 'nerdfonts-installer %s\n' "$INSTALLER_VERSION"
+    return 0
+  fi
+
+  if [[ "$OPT_HELP" == 1 ]]; then
+    usage
+    return 0
+  fi
+
+  detect_os
+  resolve_backend "$OPT_BACKEND"
+  check_dependencies
+
+  if [[ "$OPT_LIST" == 1 ]]; then
+    cmd_list_fonts
+    return 0
+  fi
+
+  if [[ "$OPT_INSTALLED" == 1 ]]; then
+    cmd_list_installed_fonts
+    return 0
+  fi
+
+  if [[ -n "$OPT_UNINSTALL_MODE" ]]; then
+    run_uninstall
+    return 0
+  fi
+
+  run_install
+}
+
 main "$@"
