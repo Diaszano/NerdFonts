@@ -86,7 +86,7 @@ print_success() {
 
 print_warn() {
   [[ "$OPT_QUIET" == 1 ]] && return 0
-  echo -e "${COLOR_YELLOW}⚠️  $*${COLOR_RESET}"
+  echo -e "${COLOR_YELLOW}⚠️  $*${COLOR_RESET}" >&2
 }
 
 backend_debug() {
