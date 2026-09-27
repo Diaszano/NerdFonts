@@ -287,7 +287,7 @@ load_installed_fonts() {
 Run: `bash scripts/install.sh --list`
 Expected: Lista de fontes obtida diretamente sem criar ou depender de arquivos temporários no `/tmp`.
 
-- [ ] **Step 4: Commit das mudanças da Task 4**
+- [x] **Step 4: Commit das mudanças da Task 4**
 
 ```bash
 git add scripts/lib/util.sh scripts/lib/backends/ scripts/lib/fonts.sh
@@ -306,7 +306,7 @@ git commit -m "refactor: remover hash map manual em string e tempfiles de catalo
 - Consumes: Entradas de linha de comando e despacho de fontes.
 - Produces: Validação limpa de argumentos e pipelines concisos de texto.
 
-- [ ] **Step 1: Enxugar normalize_font_list em cli.sh**
+- [x] **Step 1: Enxugar normalize_font_list em cli.sh**
 
 Substituir os 20 linhas de loops manuais com substrings por uma linha Unix canônica:
 ```bash
@@ -315,7 +315,7 @@ normalize_font_list() {
 }
 ```
 
-- [ ] **Step 2: Simplificar validate_arg_combination em cli.sh**
+- [x] **Step 2: Simplificar validate_arg_combination em cli.sh**
 
 Substituir a matriz combinatória redundante verificando contagem de ações principais mutuamente exclusivas:
 ```bash
@@ -333,20 +333,20 @@ validate_arg_combination() {
 }
 ```
 
-- [ ] **Step 3: Eliminar wrappers de uma linha e unificar filtros em fonts.sh**
+- [x] **Step 3: Eliminar wrappers de uma linha e unificar filtros em fonts.sh**
 
 Em `scripts/lib/fonts.sh`:
 - Remover `install_all_fonts`, `prompt_install_selected_fonts` e `uninstall_all_fonts` (fazer chamadas diretas a `dispatch_install_fonts` e `dispatch_uninstall_fonts` no `main.sh`).
 - Unificar o filtro de validação de lista de nomes (`filter_font_list` compartilhado entre install e uninstall) em vez de manter duas funções idênticas de 25 linhas com loop e grep.
 
-- [ ] **Step 4: Testar parsing com flags válidas e inválidas**
+- [x] **Step 4: Testar parsing com flags válidas e inválidas**
 
 Run: `bash scripts/install.sh --list --all`
 Expected: Falha com código 1 informando que apenas uma ação pode ser especificada.
 Run: `bash scripts/install.sh --fonts "hack, firacode" --dry-run`
 Expected: Normaliza os nomes sem erros de espaço.
 
-- [ ] **Step 5: Commit das mudanças da Task 5**
+- [x] **Step 5: Commit das mudanças da Task 5**
 
 ```bash
 git add scripts/lib/cli.sh scripts/lib/fonts.sh scripts/lib/main.sh
@@ -364,7 +364,7 @@ git commit -m "refactor: simplificar normalização de argumentos e filtros de f
 - Consumes: Downloads de assets do repositório oficial `ryanoasis/nerd-fonts`.
 - Produces: Download direto e descompactação limpa em `~/.local/share/fonts` ou `~/Library/Fonts`.
 
-- [ ] **Step 1: Remover o sistema complexo de cache com TTL e markers**
+- [x] **Step 1: Remover o sistema complexo de cache com TTL e markers**
 
 Em `scripts/lib/backends/direct.sh`:
 - Eliminar o cabeçalho de metadados `#META|epoch|tag` e cálculo manual de expiração em horas.
@@ -372,12 +372,12 @@ Em `scripts/lib/backends/direct.sh`:
 - Simplificar `direct_install_fonts`: baixar o `.tar.xz` da release com `curl -sL` ou `wget -qO-` e extrair com `tar -xJ -C "$target_dir"`.
 - Simplificar detecção de fonte instalada checando se existem arquivos correspondentes no diretório de fontes do usuário (`find "$target_dir" -iname "*${id}*"`).
 
-- [ ] **Step 2: Testar o backend direct em modo dry-run**
+- [x] **Step 2: Testar o backend direct em modo dry-run**
 
 Run: `bash scripts/install.sh --backend direct --fonts "hack" --dry-run`
 Expected: Executa sem tentar ler ou gravar caches defeituosos.
 
-- [ ] **Step 3: Commit das mudanças da Task 6**
+- [x] **Step 3: Commit das mudanças da Task 6**
 
 ```bash
 git add scripts/lib/backends/direct.sh
@@ -397,18 +397,18 @@ git commit -m "refactor: simplificar download direto de fontes sem cache de TTL 
 - Consumes: Toda a lógica enxuta final de instalação em Bash.
 - Produces: Um único `scripts/install.sh` de ~300 linhas, sem necessidade de bundler, sem subshell workarounds.
 
-- [ ] **Step 1: Integrar a lógica consolidada em scripts/install.sh**
+- [x] **Step 1: Integrar a lógica consolidada em scripts/install.sh**
 
 Mesclar os módulos essenciais (constantes, cores, detecção de OS, backends brew/pacman/direct, CLI e main) diretamente dentro de `scripts/install.sh`.
 Tornar o script completamente independente e autocontido (eliminando a necessidade de `scripts/build.sh` e da pasta `scripts/lib/`).
 
-- [ ] **Step 2: Deletar scripts/build.sh e scripts/lib/**
+- [x] **Step 2: Deletar scripts/build.sh e scripts/lib/**
 
 ```bash
 rm -rf scripts/build.sh scripts/lib/
 ```
 
-- [ ] **Step 3: Validar funcionamento completo do scripts/install.sh autocontido**
+- [x] **Step 3: Validar funcionamento completo do scripts/install.sh autocontido**
 
 Run: `bash scripts/install.sh --help`
 Expected: Ajuda completa formatada.
@@ -417,7 +417,7 @@ Expected: Informação de versão.
 Run: `bash scripts/install.sh --list`
 Expected: Lista de fontes válidas.
 
-- [ ] **Step 4: Commit das mudanças da Task 7**
+- [x] **Step 4: Commit das mudanças da Task 7**
 
 ```bash
 git add scripts/
@@ -435,7 +435,7 @@ git commit -m "refactor: consolidar instalador bash em script único autocontido
 - Consumes: Tipos de exceção e manipulação de arrays/strings em PowerShell.
 - Produces: Uso idiomático de operadores PowerShell (`-contains`, `.ToLowerInvariant()`, `throw`).
 
-- [ ] **Step 1: Remover class NfUsageException**
+- [x] **Step 1: Remover class NfUsageException**
 
 Deletar:
 ```powershell
@@ -445,7 +445,7 @@ class NfUsageException : System.Exception {
 ```
 Substituir todas as ocorrências de `throw [NfUsageException]"mensagem"` por `throw "mensagem"`.
 
-- [ ] **Step 2: Substituir funções auxiliares pelos operadores nativos do PowerShell**
+- [x] **Step 2: Substituir funções auxiliares pelos operadores nativos do PowerShell**
 
 Remover `ConvertTo-NfLowercase` e usar diretamente `$str.ToLowerInvariant()`.
 Remover a função `Test-NfListContains` e usar diretamente o operador nativo `-contains`:
@@ -460,12 +460,12 @@ Remover `Get-NfCanonicalIdsFromCsv` e usar:
 $Csv -split '\s*,\s*' | Where-Object { $_ }
 ```
 
-- [ ] **Step 3: Testar sintaxe e validação do script PowerShell**
+- [x] **Step 3: Testar sintaxe e validação do script PowerShell**
 
 Run: `pwsh -Command "& ./scripts/install.ps1 -Help"` (se pwsh disponível) ou validar sintaxe de bloco.
 Expected: Parsing limpo sem erros de classe ou funções ausentes.
 
-- [ ] **Step 4: Commit das mudanças da Task 8**
+- [x] **Step 4: Commit das mudanças da Task 8**
 
 ```bash
 git add scripts/install.ps1
@@ -483,7 +483,7 @@ git commit -m "refactor(powershell): remover classe de exceção e usar operador
 - Consumes: Arquivos de fonte baixados no Windows e seleção interativa.
 - Produces: Instalação nativa via Shell COM e seleção via `Out-GridView` ou prompt simples.
 
-- [ ] **Step 1: Substituir registro via HKCU / System.Drawing por Shell.Application**
+- [x] **Step 1: Substituir registro via HKCU / System.Drawing por Shell.Application**
 
 Remover `Get-NfFontInternalName`, `Register-NfFontFile`, `Unregister-NfFontFilesById` e manipulação manual da chave `HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts`.
 Instalar fontes usando a interface padrão do Windows Shell:
@@ -496,7 +496,7 @@ function Install-NfFontNative {
 }
 ```
 
-- [ ] **Step 2: Substituir o menu interativo console manual de 40 linhas**
+- [x] **Step 2: Substituir o menu interativo console manual de 40 linhas**
 
 Substituir o loop manual de parsing de números em `Select-NfItemsInteractive` por:
 ```powershell
@@ -512,12 +512,12 @@ function Select-NfItemsInteractive {
 }
 ```
 
-- [ ] **Step 3: Verificar estrutura do instalador PowerShell**
+- [x] **Step 3: Verificar estrutura do instalador PowerShell**
 
 Run: conferir as linhas modificadas no `scripts/install.ps1`.
 Expected: Eliminação de mais de 100 linhas de código complexo de registro e UI.
 
-- [ ] **Step 4: Commit das mudanças da Task 9**
+- [x] **Step 4: Commit das mudanças da Task 9**
 
 ```bash
 git add scripts/install.ps1

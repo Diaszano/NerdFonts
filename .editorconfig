@@ -43,12 +43,6 @@ indent_size = 2
 indent_style = space
 indent_size = 2
 
-# GitHub workflows
-[.github/workflows/*.yml]
-indent_style = space
-indent_size = 2
-
-# EditorConfig for IDE/configs editor
 [*.editorconfig]
 indent_style = space
 indent_size = 2
