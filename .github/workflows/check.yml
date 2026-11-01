@@ -1,0 +1,64 @@
+name: Linux and macOS checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install check tools on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+      - name: Install check tools on macOS
+        if: runner.os == 'macOS'
+        run: brew install shellcheck shfmt
+      - name: Check with the system Bash
+        shell: /bin/bash {0}
+        run: |
+          # Tests invoke bash themselves; ensure they use /bin/bash on macOS.
+          export PATH="/bin:$PATH"
+          /bin/bash --version
+          make check
+  direct-integration:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test official release in a temporary home
+        shell: /bin/bash {0}
+        run: PATH="/bin:$PATH" /bin/bash tests/integration.sh
+  brew-integration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test Homebrew in disposable runner
+        run: |
+          bash scripts/install.sh --backend brew --fonts heavydata
+          bash scripts/install.sh --backend brew --installed | grep -Fx heavydata
+          bash scripts/install.sh --backend brew --uninstall heavydata
+  pacman-integration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    steps:
+      - name: Prepare Arch runner
+        run: pacman -Syu --noconfirm git bash make tar xz
+      - uses: actions/checkout@v7.0.1
+      - name: Test Pacman in disposable container
+        run: |
+          bash scripts/install.sh --backend pacman --fonts heavydata
+          bash scripts/install.sh --backend pacman --installed | grep -Fx heavydata
+          bash scripts/install.sh --backend pacman --uninstall heavydata
